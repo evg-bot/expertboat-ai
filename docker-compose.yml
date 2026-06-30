@@ -1,0 +1,22 @@
+services:
+  expertboat-ai:
+    build: .
+    container_name: expertboat-ai
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DATABASE_PATH: ${DATABASE_PATH:-data/expertboat.db}
+      KNOWLEDGE_DIR: ${KNOWLEDGE_DIR:-knowledge}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-sk-your-openai-api-key}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1-mini}
+      AVITO_CLIENT_ID: ${AVITO_CLIENT_ID:-your-avito-client-id}
+      AVITO_CLIENT_SECRET: ${AVITO_CLIENT_SECRET:-your-avito-client-secret}
+      AVITO_USER_ID: ${AVITO_USER_ID:-your-avito-user-id}
+      AVITO_API_BASE_URL: ${AVITO_API_BASE_URL:-https://api.avito.ru}
+      AVITO_POLL_INTERVAL_SECONDS: ${AVITO_POLL_INTERVAL_SECONDS:-5}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-your-telegram-bot-token}
+      TELEGRAM_MANAGER_CHAT_ID: ${TELEGRAM_MANAGER_CHAT_ID:-your-manager-chat-id}
+    volumes:
+      - ./data:/app/data
+      - ./knowledge:/app/knowledge:ro
