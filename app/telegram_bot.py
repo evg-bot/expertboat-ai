@@ -11,6 +11,7 @@ from app.ai import ExpertBoatAI
 from app.config import Settings
 from app.database import Database
 from app.knowledge import KnowledgeBase, KnowledgeFragment, NormalizedQuery
+from app.rag import RAG_MIN_SCORE, RagEngine, RagSearchResult
 
 logger = logging.getLogger(__name__)
 
@@ -21,10 +22,17 @@ class LearnStep(str, Enum):
 
 
 class ExpertBoatTelegramBot:
-    def __init__(self, settings: Settings, database: Database, knowledge_base: KnowledgeBase) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        database: Database,
+        knowledge_base: KnowledgeBase,
+        rag: RagEngine,
+    ) -> None:
         self.settings = settings
         self.database = database
         self.knowledge_base = knowledge_base
+        self.rag = rag
         self.ai = ExpertBoatAI(settings, knowledge_base)
         self.learn_sessions: dict[int, dict[str, str]] = {}
         self.application = Application.builder().token(settings.telegram_bot_token).build()
@@ -35,6 +43,8 @@ class ExpertBoatTelegramBot:
         self.application.add_handler(CommandHandler("learn", self.learn))
         self.application.add_handler(CommandHandler("search", self.search))
         self.application.add_handler(CommandHandler("aliases", self.aliases))
+        self.application.add_handler(CommandHandler("reindex", self.reindex))
+        self.application.add_handler(CommandHandler("ragstatus", self.ragstatus))
         self.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.message))
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -47,12 +57,14 @@ class ExpertBoatTelegramBot:
     async def status(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message is None or not self._is_admin(update):
             return
-        mode = f"{self.settings.provider} / {self.settings.active_llm_model}" if self.settings.has_llm else "keyword matcher"
+        mode = f"{self.settings.provider} / {self.settings.active_llm_model}" if self.settings.has_llm else "local RAG"
         sqlite = "доступна" if await asyncio.to_thread(self.database.is_available) else "недоступна"
+        chunks_count = await asyncio.to_thread(self.rag.chunks_count)
         await update.message.reply_text(
             "ExpertBoat AI работает.\n"
             f"LLM provider: {mode}.\n"
             f"Knowledge docs count: {self.knowledge_base.document_count}.\n"
+            f"Knowledge chunks count: {chunks_count}.\n"
             f"Aliases groups count: {self.knowledge_base.aliases_group_count}.\n"
             f"DB status: {sqlite}."
         )
@@ -61,8 +73,31 @@ class ExpertBoatTelegramBot:
         if update.message is None or not self._is_admin(update):
             return
         self.knowledge_base.reload()
+        chunks_count = await asyncio.to_thread(self.rag.reindex)
         await update.message.reply_text(
-            f"База знаний перезагружена. Документов: {self.knowledge_base.document_count}. Алиасов: {self.knowledge_base.aliases_group_count}."
+            "База знаний перечитана и RAG-индекс пересобран.\n"
+            f"Документов: {self.knowledge_base.document_count}.\n"
+            f"Chunks: {chunks_count}.\n"
+            f"Алиасов: {self.knowledge_base.aliases_group_count}."
+        )
+
+    async def reindex(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.message is None or not self._is_admin(update):
+            return
+        self.knowledge_base.reload()
+        chunks_count = await asyncio.to_thread(self.rag.reindex)
+        await update.message.reply_text(f"RAG-индекс пересобран. Chunks: {chunks_count}.")
+
+    async def ragstatus(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.message is None or not self._is_admin(update):
+            return
+        chunks_count = await asyncio.to_thread(self.rag.chunks_count)
+        last_indexed_at = await asyncio.to_thread(self.rag.last_indexed_at)
+        await update.message.reply_text(
+            "RAG status:\n"
+            f"Документов: {self.knowledge_base.document_count}\n"
+            f"Chunks: {chunks_count}\n"
+            f"Последняя индексация: {last_indexed_at or 'нет данных'}"
         )
 
     async def stats(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -99,10 +134,8 @@ class ExpertBoatTelegramBot:
         if not query:
             await update.message.reply_text("Использование: /search <текст>")
             return
-        details = self.knowledge_base.search(query, limit=5)
-        normalized_query = details["query"]
-        fragments = details["fragments"]
-        await update.message.reply_text(self._format_search_debug(normalized_query, fragments))
+        result = await asyncio.to_thread(self.rag.search, query, limit=5)
+        await update.message.reply_text(self._format_rag_search_debug(result))
 
     async def message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message is None or update.effective_chat is None:
@@ -128,9 +161,14 @@ class ExpertBoatTelegramBot:
             text=text,
         )
         memory = await asyncio.to_thread(self.database.get_recent_memory, chat_id=chat_id, limit=10)
+        search_context = "\n".join(item["text"] for item in memory[-6:])
 
         try:
-            answer, found, used_llm = await self.ai.answer(text, memory)
+            result = await asyncio.to_thread(self.rag.search, text, context=search_context, limit=5)
+            if result.has_answer:
+                answer, found, used_llm = await self.ai.answer(text, memory, result.chunks)
+            else:
+                answer, found, used_llm = self.settings.ai_fallback_answer, False, False
         except Exception:
             logger.exception("Failed to generate Telegram answer")
             answer, found, used_llm = self.settings.ai_fallback_answer, False, False
@@ -169,6 +207,7 @@ class ExpertBoatTelegramBot:
             answer = text.strip()
             if question and answer:
                 await asyncio.to_thread(self.knowledge_base.append_learned, question, answer)
+                await asyncio.to_thread(self.rag.reindex)
                 await update.message.reply_text("Готово, добавил в базу знаний.")
             else:
                 await update.message.reply_text("Не удалось сохранить: вопрос или ответ пустой.")
@@ -180,6 +219,28 @@ class ExpertBoatTelegramBot:
         if update.effective_chat is None:
             return False
         return str(update.effective_chat.id) == self.settings.telegram_manager_chat_id
+
+    @staticmethod
+    def _format_rag_search_debug(result: RagSearchResult) -> str:
+        alias_lines = [
+            f"- {match.canonical}: {match.alias} ({match.kind}, {match.score})"
+            for match in result.query.matches[:20]
+        ]
+        chunk_lines: list[str] = []
+        for index, chunk in enumerate(result.chunks[:5], start=1):
+            snippet = chunk.clean_content[:700]
+            chunk_lines.append(
+                f"{index}. score: {chunk.score}\nsource: {chunk.source}\ntitle: {chunk.title}\nmethod: {chunk.method}\n{snippet}"
+            )
+        return (
+            f"Исходный запрос:\n{result.query.original}\n\n"
+            f"Нормализованный запрос:\n{result.query.expanded}\n\n"
+            f"Найденные алиасы:\n{chr(10).join(alias_lines) if alias_lines else 'нет'}\n\n"
+            f"Метод: {result.method}\n"
+            f"Порог ответа: {RAG_MIN_SCORE}\n"
+            f"Top score: {result.top_score}\n\n"
+            f"Top 5 chunks:\n{chr(10).join(chunk_lines) if chunk_lines else 'ничего не найдено'}"
+        )
 
     @staticmethod
     def _format_search_debug(query: NormalizedQuery, fragments: list[KnowledgeFragment]) -> str:

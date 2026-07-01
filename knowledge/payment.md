@@ -1,3 +1,18 @@
+---
+product: Expert Boat
+category: payment
+tags:
+  - оплата
+  - оплатить
+  - купить
+  - как купить
+  - счет
+  - счёт
+  - сбп
+  - qr
+priority: 10
+---
+
 # Покупка и оплата
 
 Чтобы купить товар, напишите Expert Boat в Telegram @expertboat или позвоните по телефону +7 995 832 00 02.

@@ -3,7 +3,8 @@ from __future__ import annotations
 from openai import AsyncOpenAI
 
 from app.config import Settings
-from app.knowledge import KnowledgeBase, KnowledgeFragment, strip_markdown
+from app.knowledge import KnowledgeBase, strip_markdown
+from app.rag import RagChunk
 
 
 class ExpertBoatAI:
@@ -28,15 +29,15 @@ class ExpertBoatAI:
         self,
         question: str,
         memory: list[dict[str, str]] | None = None,
+        chunks: list[RagChunk] | None = None,
     ) -> tuple[str, bool, bool]:
         memory = memory or []
-        context = self._format_memory_for_search(memory)
-        fragments = self.knowledge_base.relevant_fragments(question, context=context, limit=3)
-        if not fragments:
+        chunks = chunks or []
+        if not chunks:
             return self.settings.ai_fallback_answer, False, False
 
         if self.client is None:
-            return self.knowledge_base.keyword_answer(question, context=context) or self.settings.ai_fallback_answer, True, False
+            return chunks[0].clean_content or self.settings.ai_fallback_answer, True, False
 
         response = await self.client.chat.completions.create(
             model=self.settings.active_llm_model,
@@ -58,7 +59,7 @@ class ExpertBoatAI:
                 {
                     "role": "user",
                     "content": (
-                        f"ФРАГМЕНТЫ БАЗЫ ЗНАНИЙ:\n{self._format_fragments(fragments)}\n\n"
+                        f"ФРАГМЕНТЫ БАЗЫ ЗНАНИЙ:\n{self._format_chunks(chunks)}\n\n"
                         f"ПОСЛЕДНИЕ СООБЩЕНИЯ:\n{self._format_memory_for_prompt(memory)}\n\n"
                         f"ВОПРОС КЛИЕНТА:\n{question}"
                     ),
@@ -70,11 +71,11 @@ class ExpertBoatAI:
         return answer or self.settings.ai_fallback_answer, True, True
 
     @staticmethod
-    def _format_fragments(fragments: list[KnowledgeFragment]) -> str:
+    def _format_chunks(chunks: list[RagChunk]) -> str:
         parts: list[str] = []
-        for index, fragment in enumerate(fragments, start=1):
+        for index, chunk in enumerate(chunks, start=1):
             parts.append(
-                f"[{index}] {fragment.source} | {fragment.title} | score={fragment.score}\n{fragment.clean_text}"
+                f"[{index}] {chunk.source} | {chunk.title} | score={chunk.score}\n{chunk.clean_content}"
             )
         return "\n\n".join(parts)
 
@@ -83,7 +84,3 @@ class ExpertBoatAI:
         if not memory:
             return "Нет предыдущих сообщений."
         return "\n".join(f"{item['role']}: {item['text']}" for item in memory[-10:])
-
-    @staticmethod
-    def _format_memory_for_search(memory: list[dict[str, str]]) -> str:
-        return "\n".join(item["text"] for item in memory[-6:])

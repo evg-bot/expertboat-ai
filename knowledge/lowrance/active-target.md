@@ -1,3 +1,17 @@
+---
+product: ActiveTarget 2
+category: lowrance
+tags:
+  - ActiveTarget 2
+  - ActiveTarget 2 XL
+  - ат2
+  - at2
+  - active target 2
+  - live sonar
+  - ливскоп лоуренс
+priority: 10
+---
+
 # Lowrance ActiveTarget
 
 Lowrance ActiveTarget — система live sonar для рыбалки.

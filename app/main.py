@@ -8,6 +8,7 @@ from contextlib import suppress
 from app.config import load_settings
 from app.database import Database
 from app.knowledge import KnowledgeBase
+from app.rag import RagEngine
 from app.telegram_bot import ExpertBoatTelegramBot
 
 
@@ -23,11 +24,14 @@ class ExpertBoatApp:
         )
         self.database = Database(self.settings.database_path)
         self.knowledge_base = KnowledgeBase(self.settings.knowledge_dir)
+        self.rag = RagEngine(self.database, self.knowledge_base)
         self.telegram: ExpertBoatTelegramBot | None = None
         self.stop_event = asyncio.Event()
 
     async def run(self) -> None:
         await asyncio.to_thread(self.database.init)
+        chunks_count = await asyncio.to_thread(self.rag.reindex)
+        logger.info("Knowledge RAG index rebuilt: %s chunks", chunks_count)
 
         loop = asyncio.get_running_loop()
         with suppress(NotImplementedError):
@@ -42,7 +46,7 @@ class ExpertBoatApp:
             await self.stop_event.wait()
             return
 
-        self.telegram = ExpertBoatTelegramBot(self.settings, self.database, self.knowledge_base)
+        self.telegram = ExpertBoatTelegramBot(self.settings, self.database, self.knowledge_base, self.rag)
         await self.telegram.start_polling()
 
         logger.info("ExpertBoat Telegram knowledge bot started")

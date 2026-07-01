@@ -1,3 +1,15 @@
+---
+product: Expert Boat
+category: contacts
+tags:
+  - контакты
+  - телефон
+  - telegram
+  - max
+  - expert boat
+priority: 10
+---
+
 # Контакты Expert Boat
 
 Связаться с Expert Boat можно по телефону +7 995 832 00 02.
