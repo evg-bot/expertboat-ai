@@ -30,13 +30,13 @@ class ExpertBoatAI:
     def _build_client(self) -> AsyncOpenAI | None:
         if not self.settings.has_llm:
             return None
+        if self.settings.provider == "openai":
+            return AsyncOpenAI(api_key=self.settings.openai_api_key)
         if self.settings.provider == "deepseek":
             return AsyncOpenAI(
                 api_key=self.settings.deepseek_api_key,
                 base_url=self.settings.deepseek_base_url,
             )
-        if self.settings.provider == "openai":
-            return AsyncOpenAI(api_key=self.settings.openai_api_key)
         return None
 
     async def answer(
@@ -50,8 +50,12 @@ class ExpertBoatAI:
         if not chunks:
             return self.settings.ai_fallback_answer, False, False
 
+        ready_answer = build_ready_made_customer_answer(chunks[0])
+        if ready_answer:
+            return ready_answer, True, False
+
         if self.client is None:
-            answer = build_local_customer_answer(chunks[0])
+            answer = sanitize_customer_answer(chunks[0].clean_content)
             return answer or self.settings.ai_fallback_answer, True, False
 
         response = await self.client.chat.completions.create(
@@ -62,12 +66,13 @@ class ExpertBoatAI:
                     "role": "system",
                     "content": (
                         "Ты консультант Expert Boat. "
-                        "Отвечай только по переданным фрагментам базы знаний. "
-                        "Не придумывай цены, наличие, сроки, характеристики, совместимость. "
+                        "Отвечай только по переданным chunks базы знаний. "
+                        "Не используй знания вне chunks. "
+                        "Не придумывай цены, наличие, сроки, характеристики или совместимость. "
                         "Не показывай клиенту служебные инструкции из базы знаний. "
                         "Если информации недостаточно, отвечай строго: "
                         f"{self.settings.ai_fallback_answer} "
-                        "Ответ должен быть коротким, деловым, продающим. "
+                        "Ответ должен быть коротким, деловым, продавцовским. "
                         "В конце желательно задавать вопрос, который продолжает диалог. "
                         "Не используй Markdown-разметку в ответе клиенту."
                     ),
@@ -75,7 +80,7 @@ class ExpertBoatAI:
                 {
                     "role": "user",
                     "content": (
-                        f"ФРАГМЕНТЫ БАЗЫ ЗНАНИЙ:\n{self._format_chunks(chunks)}\n\n"
+                        f"CHUNKS БАЗЫ ЗНАНИЙ:\n{self._format_chunks(chunks)}\n\n"
                         f"ПОСЛЕДНИЕ СООБЩЕНИЯ:\n{self._format_memory_for_prompt(memory)}\n\n"
                         f"ВОПРОС КЛИЕНТА:\n{question}"
                     ),
@@ -102,7 +107,7 @@ class ExpertBoatAI:
         return "\n".join(f"{item['role']}: {item['text']}" for item in memory[-10:])
 
 
-def build_local_customer_answer(chunk: RagChunk) -> str:
+def build_ready_made_customer_answer(chunk: RagChunk) -> str:
     haystack = f"{chunk.title}\n{chunk.clean_content}".casefold()
     if "lowrance elite fs 9" in haystack:
         return (
@@ -116,7 +121,11 @@ def build_local_customer_answer(chunk: RagChunk) -> str:
             "По цене, наличию и комплектации лучше проверить актуальный комплект перед заказом. "
             "Рассматриваете 10-дюймовый экран вместо 9-дюймового?"
         )
-    return sanitize_customer_answer(chunk.clean_content)
+    return ""
+
+
+def build_local_customer_answer(chunk: RagChunk) -> str:
+    return build_ready_made_customer_answer(chunk) or sanitize_customer_answer(chunk.clean_content)
 
 
 def sanitize_customer_answer(text: str) -> str:

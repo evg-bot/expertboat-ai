@@ -108,7 +108,7 @@ def _int_env(name: str, default: int) -> int:
 def load_settings() -> Settings:
     load_dotenv(BASE_DIR / ".env")
 
-    llm_provider = _env("LLM_PROVIDER", "deepseek").strip().casefold()
+    llm_provider = _env("LLM_PROVIDER", "openai").strip().casefold()
     openai_model = _env("OPENAI_MODEL", "gpt-4.1-mini")
     llm_model = _env("LLM_MODEL") or (openai_model if llm_provider == "openai" else "deepseek-chat")
 

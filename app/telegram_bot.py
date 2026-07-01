@@ -58,7 +58,11 @@ class ExpertBoatTelegramBot:
     async def status(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message is None or not await self._ensure_admin(update):
             return
-        mode = f"{self.settings.provider} / {self.settings.active_llm_model}" if self.settings.has_llm else "local RAG without LLM"
+        mode = (
+            f"{self.settings.provider} / {self.settings.active_llm_model} / enabled"
+            if self.settings.has_llm
+            else f"{self.settings.provider} / {self.settings.active_llm_model} / disabled, local RAG fallback"
+        )
         sqlite = "доступна" if await asyncio.to_thread(self.database.is_available) else "недоступна"
         chunks_count = await asyncio.to_thread(self.rag.chunks_count)
         rag_state = "active" if await asyncio.to_thread(self.rag.is_ready) else "inactive"
