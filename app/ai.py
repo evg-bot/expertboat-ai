@@ -3,7 +3,7 @@ from __future__ import annotations
 from openai import AsyncOpenAI
 
 from app.config import Settings
-from app.knowledge import KnowledgeBase, KnowledgeFragment
+from app.knowledge import KnowledgeBase, KnowledgeFragment, strip_markdown
 
 
 class ExpertBoatAI:
@@ -51,7 +51,8 @@ class ExpertBoatAI:
                         "Если информации недостаточно, отвечай строго: "
                         f"{self.settings.ai_fallback_answer} "
                         "Ответ должен быть коротким, деловым, продающим. "
-                        "В конце желательно задавать вопрос, который продолжает диалог."
+                        "В конце желательно задавать вопрос, который продолжает диалог. "
+                        "Не используй Markdown-разметку в ответе клиенту."
                     ),
                 },
                 {
@@ -65,7 +66,7 @@ class ExpertBoatAI:
             ],
         )
 
-        answer = (response.choices[0].message.content or "").strip()
+        answer = strip_markdown((response.choices[0].message.content or "").strip())
         return answer or self.settings.ai_fallback_answer, True, True
 
     @staticmethod
@@ -73,7 +74,7 @@ class ExpertBoatAI:
         parts: list[str] = []
         for index, fragment in enumerate(fragments, start=1):
             parts.append(
-                f"[{index}] {fragment.source} | {fragment.title} | score={fragment.score}\n{fragment.text}"
+                f"[{index}] {fragment.source} | {fragment.title} | score={fragment.score}\n{fragment.clean_text}"
             )
         return "\n\n".join(parts)
 

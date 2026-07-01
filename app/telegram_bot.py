@@ -10,7 +10,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandl
 from app.ai import ExpertBoatAI
 from app.config import Settings
 from app.database import Database
-from app.knowledge import KnowledgeBase
+from app.knowledge import KnowledgeBase, KnowledgeFragment, NormalizedQuery
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +33,8 @@ class ExpertBoatTelegramBot:
         self.application.add_handler(CommandHandler("reload", self.reload))
         self.application.add_handler(CommandHandler("stats", self.stats))
         self.application.add_handler(CommandHandler("learn", self.learn))
+        self.application.add_handler(CommandHandler("search", self.search))
+        self.application.add_handler(CommandHandler("aliases", self.aliases))
         self.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.message))
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -45,15 +47,14 @@ class ExpertBoatTelegramBot:
     async def status(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message is None or not self._is_admin(update):
             return
-        mode = f"LLM ({self.settings.provider}, {self.settings.active_llm_model})" if self.settings.has_llm else "keyword matcher"
-        avito = "настроен" if self.settings.has_avito else "не настроен, отключён из обязательного запуска"
+        mode = f"{self.settings.provider} / {self.settings.active_llm_model}" if self.settings.has_llm else "keyword matcher"
         sqlite = "доступна" if await asyncio.to_thread(self.database.is_available) else "недоступна"
         await update.message.reply_text(
             "ExpertBoat AI работает.\n"
-            f"Режим ответов: {mode}.\n"
-            f"Документов knowledge: {self.knowledge_base.document_count}.\n"
-            f"SQLite: {sqlite}.\n"
-            f"Avito API: {avito}."
+            f"LLM provider: {mode}.\n"
+            f"Knowledge docs count: {self.knowledge_base.document_count}.\n"
+            f"Aliases groups count: {self.knowledge_base.aliases_group_count}.\n"
+            f"DB status: {sqlite}."
         )
 
     async def reload(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -61,7 +62,7 @@ class ExpertBoatTelegramBot:
             return
         self.knowledge_base.reload()
         await update.message.reply_text(
-            f"База знаний перезагружена. Документов: {self.knowledge_base.document_count}."
+            f"База знаний перезагружена. Документов: {self.knowledge_base.document_count}. Алиасов: {self.knowledge_base.aliases_group_count}."
         )
 
     async def stats(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -80,7 +81,28 @@ class ExpertBoatTelegramBot:
         if update.message is None or update.effective_chat is None or not self._is_admin(update):
             return
         self.learn_sessions[update.effective_chat.id] = {"step": LearnStep.QUESTION.value}
-        await update.message.reply_text("Введите вопрос, которому нужно научить бота.")
+        await update.message.reply_text("Введите вопрос.")
+
+    async def aliases(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.message is None or not self._is_admin(update):
+            return
+        groups = self.knowledge_base.first_alias_groups(20)
+        text = "Групп алиасов: " + str(self.knowledge_base.aliases_group_count)
+        if groups:
+            text += "\nПервые 20 групп:\n" + "\n".join(f"- {group}" for group in groups)
+        await update.message.reply_text(text)
+
+    async def search(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.message is None or not self._is_admin(update):
+            return
+        query = " ".join(context.args).strip()
+        if not query:
+            await update.message.reply_text("Использование: /search <текст>")
+            return
+        details = self.knowledge_base.search(query, limit=5)
+        normalized_query = details["query"]
+        fragments = details["fragments"]
+        await update.message.reply_text(self._format_search_debug(normalized_query, fragments))
 
     async def message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message is None or update.effective_chat is None:
@@ -139,7 +161,7 @@ class ExpertBoatTelegramBot:
         if step == LearnStep.QUESTION.value:
             session["question"] = text
             session["step"] = LearnStep.ANSWER.value
-            await update.message.reply_text("Теперь введите правильный ответ.")
+            await update.message.reply_text("Введите правильный ответ.")
             return
 
         if step == LearnStep.ANSWER.value:
@@ -147,9 +169,9 @@ class ExpertBoatTelegramBot:
             answer = text.strip()
             if question and answer:
                 await asyncio.to_thread(self.knowledge_base.append_learned, question, answer)
-                await update.message.reply_text("Готово. Пара сохранена в knowledge/learned.md, база знаний перечитана.")
+                await update.message.reply_text("Готово, добавил в базу знаний.")
             else:
-                await update.message.reply_text("Не удалось сохранить обучение: вопрос или ответ пустой.")
+                await update.message.reply_text("Не удалось сохранить: вопрос или ответ пустой.")
             self.learn_sessions.pop(telegram_chat_id, None)
 
     def _is_admin(self, update: Update) -> bool:
@@ -158,6 +180,25 @@ class ExpertBoatTelegramBot:
         if update.effective_chat is None:
             return False
         return str(update.effective_chat.id) == self.settings.telegram_manager_chat_id
+
+    @staticmethod
+    def _format_search_debug(query: NormalizedQuery, fragments: list[KnowledgeFragment]) -> str:
+        alias_lines = [
+            f"- {match.canonical}: {match.alias} ({match.kind}, {match.score})"
+            for match in query.matches[:20]
+        ]
+        fragment_lines: list[str] = []
+        for index, fragment in enumerate(fragments[:5], start=1):
+            snippet = fragment.clean_text[:700]
+            fragment_lines.append(
+                f"{index}. {fragment.source} | {fragment.title}\nscore: {fragment.score}\n{snippet}"
+            )
+        return (
+            f"Исходный запрос:\n{query.original}\n\n"
+            f"Нормализованный запрос:\n{query.expanded}\n\n"
+            f"Найденные алиасы:\n{chr(10).join(alias_lines) if alias_lines else 'нет'}\n\n"
+            f"Top 5 документов:\n{chr(10).join(fragment_lines) if fragment_lines else 'ничего не найдено'}"
+        )
 
     async def start_polling(self) -> None:
         await self.application.initialize()

@@ -2,3 +2,5 @@ httpx==0.27.2
 python-dotenv==1.0.1
 openai==1.59.7
 python-telegram-bot==21.9
+PyYAML==6.0.2
+rapidfuzz==3.11.0
