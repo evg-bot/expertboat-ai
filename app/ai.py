@@ -4,7 +4,6 @@ from openai import AsyncOpenAI
 
 from app.config import Settings
 from app.knowledge import KnowledgeBase, KnowledgeFragment
-from app.models import StoredMessage
 
 
 class ExpertBoatAI:
@@ -25,19 +24,19 @@ class ExpertBoatAI:
             return AsyncOpenAI(api_key=self.settings.openai_api_key)
         return None
 
-    async def answer(self, question: str, history: list[StoredMessage] | None = None) -> str:
-        fragments = self.knowledge_base.relevant_fragments(question)
+    async def answer(
+        self,
+        question: str,
+        memory: list[dict[str, str]] | None = None,
+    ) -> tuple[str, bool, bool]:
+        memory = memory or []
+        context = self._format_memory_for_search(memory)
+        fragments = self.knowledge_base.relevant_fragments(question, context=context, limit=3)
         if not fragments:
-            return self.settings.ai_fallback_answer
+            return self.settings.ai_fallback_answer, False, False
 
         if self.client is None:
-            return self.knowledge_base.keyword_answer(question) or self.settings.ai_fallback_answer
-
-        history = history or []
-        history_text = "\n".join(
-            f"{message.direction}: {message.text}" for message in history[-6:]
-        )
-        fragments_text = self._format_fragments(fragments)
+            return self.knowledge_base.keyword_answer(question, context=context) or self.settings.ai_fallback_answer, True, False
 
         response = await self.client.chat.completions.create(
             model=self.settings.active_llm_model,
@@ -46,19 +45,20 @@ class ExpertBoatAI:
                 {
                     "role": "system",
                     "content": (
-                        "Ты Telegram-бот магазина морской электроники Expert Boat. "
-                        "Отвечай клиенту коротко, понятно и на русском языке. "
-                        "Используй только переданные фрагменты базы знаний. "
-                        "Запрещено использовать знания вне этих фрагментов, додумывать цены, наличие, сроки, гарантии или характеристики. "
-                        "Если во фрагментах нет точного ответа, верни ровно эту фразу без дополнений: "
-                        f"{self.settings.ai_fallback_answer}"
+                        "Ты консультант Expert Boat. "
+                        "Отвечай только по переданным фрагментам базы знаний. "
+                        "Не придумывай цены, наличие, сроки, характеристики, совместимость. "
+                        "Если информации недостаточно, отвечай строго: "
+                        f"{self.settings.ai_fallback_answer} "
+                        "Ответ должен быть коротким, деловым, продающим. "
+                        "В конце желательно задавать вопрос, который продолжает диалог."
                     ),
                 },
                 {
                     "role": "user",
                     "content": (
-                        f"ФРАГМЕНТЫ БАЗЫ ЗНАНИЙ:\n{fragments_text}\n\n"
-                        f"ИСТОРИЯ ДИАЛОГА:\n{history_text}\n\n"
+                        f"ФРАГМЕНТЫ БАЗЫ ЗНАНИЙ:\n{self._format_fragments(fragments)}\n\n"
+                        f"ПОСЛЕДНИЕ СООБЩЕНИЯ:\n{self._format_memory_for_prompt(memory)}\n\n"
                         f"ВОПРОС КЛИЕНТА:\n{question}"
                     ),
                 },
@@ -66,11 +66,23 @@ class ExpertBoatAI:
         )
 
         answer = (response.choices[0].message.content or "").strip()
-        return answer or self.settings.ai_fallback_answer
+        return answer or self.settings.ai_fallback_answer, True, True
 
     @staticmethod
     def _format_fragments(fragments: list[KnowledgeFragment]) -> str:
         parts: list[str] = []
         for index, fragment in enumerate(fragments, start=1):
-            parts.append(f"[{index}] {fragment.source}\n{fragment.text}")
+            parts.append(
+                f"[{index}] {fragment.source} | {fragment.title} | score={fragment.score}\n{fragment.text}"
+            )
         return "\n\n".join(parts)
+
+    @staticmethod
+    def _format_memory_for_prompt(memory: list[dict[str, str]]) -> str:
+        if not memory:
+            return "Нет предыдущих сообщений."
+        return "\n".join(f"{item['role']}: {item['text']}" for item in memory[-10:])
+
+    @staticmethod
+    def _format_memory_for_search(memory: list[dict[str, str]]) -> str:
+        return "\n".join(item["text"] for item in memory[-6:])

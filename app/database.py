@@ -43,6 +43,22 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_messages_chat
                     ON messages(channel, chat_id, created_at);
 
+                CREATE TABLE IF NOT EXISTS bot_memory (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    chat_id TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    text TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_bot_memory_chat
+                    ON bot_memory(chat_id, created_at);
+
+                CREATE TABLE IF NOT EXISTS bot_stats (
+                    key TEXT PRIMARY KEY,
+                    value INTEGER NOT NULL DEFAULT 0
+                );
+
                 CREATE TABLE IF NOT EXISTS avito_tokens (
                     id INTEGER PRIMARY KEY CHECK (id = 1),
                     access_token TEXT NOT NULL,
@@ -52,6 +68,14 @@ class Database:
                 );
                 """
             )
+
+    def is_available(self) -> bool:
+        try:
+            with self.connect() as db:
+                db.execute("SELECT 1").fetchone()
+            return True
+        except sqlite3.Error:
+            return False
 
     def has_message(self, channel: MessageChannel, external_id: str) -> bool:
         with self.connect() as db:
@@ -112,6 +136,61 @@ class Database:
             )
             for row in reversed(rows)
         ]
+
+    def save_memory(self, *, chat_id: str, role: str, text: str) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with self.connect() as db:
+            db.execute(
+                """
+                INSERT INTO bot_memory (chat_id, role, text, created_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (chat_id, role, text, now),
+            )
+            ids_to_keep = db.execute(
+                """
+                SELECT id FROM bot_memory
+                WHERE chat_id = ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT 10
+                """,
+                (chat_id,),
+            ).fetchall()
+            keep_ids = [row["id"] for row in ids_to_keep]
+            if keep_ids:
+                placeholders = ",".join("?" for _ in keep_ids)
+                db.execute(
+                    f"DELETE FROM bot_memory WHERE chat_id = ? AND id NOT IN ({placeholders})",
+                    (chat_id, *keep_ids),
+                )
+
+    def get_recent_memory(self, *, chat_id: str, limit: int = 10) -> list[dict[str, str]]:
+        with self.connect() as db:
+            rows = db.execute(
+                """
+                SELECT role, text, created_at FROM bot_memory
+                WHERE chat_id = ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                (chat_id, limit),
+            ).fetchall()
+        return [dict(row) for row in reversed(rows)]
+
+    def increment_stat(self, key: str, amount: int = 1) -> None:
+        with self.connect() as db:
+            db.execute(
+                """
+                INSERT INTO bot_stats (key, value) VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = value + excluded.value
+                """,
+                (key, amount),
+            )
+
+    def get_stats(self) -> dict[str, int]:
+        with self.connect() as db:
+            rows = db.execute("SELECT key, value FROM bot_stats").fetchall()
+        return {row["key"]: int(row["value"]) for row in rows}
 
     def save_avito_token(
         self,

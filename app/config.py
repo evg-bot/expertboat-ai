@@ -70,6 +70,10 @@ class Settings:
         return self.provider == "deepseek" and _is_real_value(self.deepseek_api_key)
 
     @property
+    def has_telegram(self) -> bool:
+        return _is_real_value(self.telegram_bot_token)
+
+    @property
     def has_avito(self) -> bool:
         return all(
             _is_real_value(value)

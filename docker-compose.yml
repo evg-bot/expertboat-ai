@@ -23,4 +23,4 @@ services:
       AVITO_POLL_INTERVAL_SECONDS: ${AVITO_POLL_INTERVAL_SECONDS:-5}
     volumes:
       - ./data:/app/data
-      - ./knowledge:/app/knowledge:ro
+      - ./knowledge:/app/knowledge
