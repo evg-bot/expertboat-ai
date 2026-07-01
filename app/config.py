@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +20,11 @@ class Settings:
     database_path: Path
     knowledge_dir: Path
 
+    llm_provider: str
+    llm_model: str
+    deepseek_api_key: str
+    deepseek_base_url: str
+
     openai_api_key: str
     openai_model: str
 
@@ -35,8 +40,34 @@ class Settings:
     ai_fallback_answer: str = FALLBACK_ANSWER
 
     @property
+    def provider(self) -> str:
+        return self.llm_provider.strip().casefold()
+
+    @property
+    def active_llm_model(self) -> str:
+        if self.provider == "openai":
+            return self.openai_model
+        return self.llm_model
+
+    @property
+    def active_llm_api_key(self) -> str:
+        if self.provider == "openai":
+            return self.openai_api_key
+        if self.provider == "deepseek":
+            return self.deepseek_api_key
+        return ""
+
+    @property
+    def has_llm(self) -> bool:
+        return self.provider in {"deepseek", "openai"} and _is_real_value(self.active_llm_api_key)
+
+    @property
     def has_openai(self) -> bool:
-        return _is_real_value(self.openai_api_key)
+        return self.provider == "openai" and _is_real_value(self.openai_api_key)
+
+    @property
+    def has_deepseek(self) -> bool:
+        return self.provider == "deepseek" and _is_real_value(self.deepseek_api_key)
 
     @property
     def has_avito(self) -> bool:
@@ -70,13 +101,21 @@ def _int_env(name: str, default: int) -> int:
 def load_settings() -> Settings:
     load_dotenv(BASE_DIR / ".env")
 
+    llm_provider = _env("LLM_PROVIDER", "deepseek").strip().casefold()
+    openai_model = _env("OPENAI_MODEL", "gpt-4.1-mini")
+    llm_model = _env("LLM_MODEL") or (openai_model if llm_provider == "openai" else "deepseek-chat")
+
     return Settings(
         app_env=_env("APP_ENV", "production"),
         log_level=_env("LOG_LEVEL", "INFO"),
         database_path=BASE_DIR / _env("DATABASE_PATH", "data/expertboat.db"),
         knowledge_dir=BASE_DIR / _env("KNOWLEDGE_DIR", "knowledge"),
+        llm_provider=llm_provider,
+        llm_model=llm_model,
+        deepseek_api_key=_env("DEEPSEEK_API_KEY"),
+        deepseek_base_url=_env("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
         openai_api_key=_env("OPENAI_API_KEY"),
-        openai_model=_env("OPENAI_MODEL", "gpt-4.1-mini"),
+        openai_model=openai_model,
         avito_client_id=_env("AVITO_CLIENT_ID"),
         avito_client_secret=_env("AVITO_CLIENT_SECRET"),
         avito_user_id=_env("AVITO_USER_ID"),

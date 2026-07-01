@@ -1,7 +1,15 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
+
+
+@dataclass(frozen=True)
+class KnowledgeFragment:
+    source: str
+    text: str
+    score: int
 
 
 class KnowledgeBase:
@@ -30,16 +38,18 @@ class KnowledgeBase:
     def is_empty(self) -> bool:
         return not self.load_markdown().strip()
 
-    def keyword_answer(self, question: str) -> str | None:
+    def relevant_fragments(self, question: str, *, limit: int = 4) -> list[KnowledgeFragment]:
         normalized_question = _normalize(question)
         if not normalized_question:
-            return None
+            return []
 
         question_words = set(_words(normalized_question))
-        best_score = 0
-        best_section: str | None = None
+        if not question_words:
+            return []
 
-        for _, document in self._cache:
+        fragments: list[KnowledgeFragment] = []
+        for path, document in self._cache:
+            source = str(path.relative_to(self.directory))
             for section in _sections(document):
                 normalized_section = _normalize(section)
                 section_words = set(_words(normalized_section))
@@ -48,13 +58,17 @@ class KnowledgeBase:
                 score = len(question_words & section_words)
                 if normalized_question in normalized_section:
                     score += 5
-                if score > best_score:
-                    best_score = score
-                    best_section = section.strip()
+                if score > 0:
+                    fragments.append(KnowledgeFragment(source=source, text=section.strip(), score=score))
 
-        if best_score <= 0 or best_section is None:
+        fragments.sort(key=lambda fragment: fragment.score, reverse=True)
+        return fragments[:limit]
+
+    def keyword_answer(self, question: str) -> str | None:
+        fragments = self.relevant_fragments(question, limit=1)
+        if not fragments:
             return None
-        return best_section
+        return fragments[0].text
 
 
 def _sections(document: str) -> Iterable[str]:
@@ -74,4 +88,8 @@ def _normalize(text: str) -> str:
 
 
 def _words(text: str) -> list[str]:
-    return [word.strip(".,:;!?()[]{}<>\"'«»") for word in text.split() if len(word.strip(".,:;!?()[]{}<>\"'«»")) >= 3]
+    return [
+        word
+        for raw_word in text.split()
+        if len(word := raw_word.strip(".,:;!?()[]{}<>\"'«»")) >= 3
+    ]

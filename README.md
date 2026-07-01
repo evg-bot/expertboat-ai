@@ -1,27 +1,30 @@
-﻿# ExpertBoat AI
+# ExpertBoat AI
 
-MVP Telegram-бота Expert Boat для ответов по Markdown-базе знаний. Бот принимает вопросы в Telegram, ищет ответ в `knowledge/*.md`, использует OpenAI при наличии ключа и fallback keyword matcher без OpenAI.
+MVP Telegram-бота Expert Boat для ответов по Markdown-базе знаний. Бот принимает вопросы в Telegram, сначала ищет релевантные фрагменты в `knowledge/*.md`, затем при наличии ключа отправляет только эти фрагменты в LLM. Если ключей LLM нет, работает локальный keyword matcher.
 
 ## Возможности
 
 - Telegram-бот на `python-telegram-bot`.
-- Ответы по Markdown-базе знаний из папки `knowledge/`.
-- OpenAI API, модель из `OPENAI_MODEL`, по умолчанию `gpt-4.1-mini`.
-- Если `OPENAI_API_KEY` не заполнен, используется простой keyword matcher по базе знаний.
-- Если точного ответа нет, бот отвечает:
+- Markdown-база знаний из папки `knowledge/`.
+- DeepSeek API как основной опциональный LLM-провайдер.
+- OpenAI остаётся опциональным LLM-провайдером.
+- Перед LLM всегда выполняется поиск релевантных фрагментов в базе знаний.
+- Если фрагментов нет, бот строго отвечает:
 
 ```text
 Точный ответ передам специалисту Expert Boat.
 ```
 
-- Avito API временно не участвует в обязательном запуске. Если `AVITO_CLIENT_ID`, `AVITO_CLIENT_SECRET` и `AVITO_USER_ID` не заполнены, Telegram MVP всё равно работает.
+- LLM запрещено использовать знания вне переданных фрагментов.
+- Если ключей LLM нет, используется keyword matcher по `knowledge/*.md`.
+- Avito API временно не участвует в обязательном запуске.
 - SQLite хранит историю Telegram-диалогов.
 
 ## Команды Telegram
 
 ```text
 /start   - приветствие
-/status  - режим работы, OpenAI/keyword matcher, статус Avito
+/status  - режим работы, провайдер LLM, статус Avito
 /reload  - перечитать Markdown-базу знаний
 ```
 
@@ -39,22 +42,32 @@ cp .env.example .env
 TELEGRAM_BOT_TOKEN=123456:telegram-token
 ```
 
-3. При желании заполните OpenAI:
+3. Для DeepSeek заполните:
 
 ```text
+LLM_PROVIDER=deepseek
+LLM_MODEL=deepseek-chat
+DEEPSEEK_API_KEY=...
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+```
+
+4. Для OpenAI вместо DeepSeek используйте:
+
+```text
+LLM_PROVIDER=openai
 OPENAI_API_KEY=sk-...
 OPENAI_MODEL=gpt-4.1-mini
 ```
 
-Без `OPENAI_API_KEY` бот будет отвечать через keyword matcher по `knowledge/*.md`.
+Без `DEEPSEEK_API_KEY` и `OPENAI_API_KEY` бот будет отвечать через keyword matcher.
 
-4. Запустите:
+5. Запустите:
 
 ```bash
 docker compose up -d --build
 ```
 
-5. Проверьте логи:
+6. Проверьте логи:
 
 ```bash
 docker compose logs -f
@@ -119,17 +132,34 @@ docker compose up -d --build
 | --- | --- |
 | `TELEGRAM_BOT_TOKEN` | Токен Telegram-бота от BotFather. |
 
-Опциональные:
+LLM-провайдеры:
 
 | Переменная | Описание |
 | --- | --- |
-| `OPENAI_API_KEY` | API ключ OpenAI. Если пустой, используется keyword matcher. |
+| `LLM_PROVIDER` | `deepseek` или `openai`. По умолчанию `deepseek`. |
+| `LLM_MODEL` | Модель для DeepSeek, по умолчанию `deepseek-chat`. |
+| `DEEPSEEK_API_KEY` | API ключ DeepSeek. Если пустой, LLM не используется для DeepSeek. |
+| `DEEPSEEK_BASE_URL` | Base URL DeepSeek, по умолчанию `https://api.deepseek.com`. |
+| `OPENAI_API_KEY` | API ключ OpenAI. Используется при `LLM_PROVIDER=openai`. |
 | `OPENAI_MODEL` | Модель OpenAI, по умолчанию `gpt-4.1-mini`. |
+
+Остальные переменные:
+
+| Переменная | Описание |
+| --- | --- |
 | `DATABASE_PATH` | Путь к SQLite базе, по умолчанию `data/expertboat.db`. |
 | `KNOWLEDGE_DIR` | Путь к Markdown-базе знаний, по умолчанию `knowledge`. |
 | `AVITO_CLIENT_ID` | Необязателен для Telegram MVP. |
 | `AVITO_CLIENT_SECRET` | Необязателен для Telegram MVP. |
 | `AVITO_USER_ID` | Необязателен для Telegram MVP. |
+
+## Как бот отвечает
+
+1. Пользователь задаёт вопрос в Telegram.
+2. Бот ищет релевантные секции в `knowledge/*.md`.
+3. Если секций нет, сразу отвечает fallback-фразой.
+4. Если секции есть и настроен LLM-провайдер, бот отправляет в LLM только найденные фрагменты и вопрос клиента.
+5. Если LLM-ключей нет, бот возвращает лучший найденный фрагмент через keyword matcher.
 
 ## База знаний
 

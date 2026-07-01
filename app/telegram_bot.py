@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import asyncio
 import logging
@@ -36,7 +36,7 @@ class ExpertBoatTelegramBot:
     async def status(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message is None:
             return
-        mode = "OpenAI" if self.settings.has_openai else "keyword matcher"
+        mode = f"LLM ({self.settings.provider}, {self.settings.active_llm_model})" if self.settings.has_llm else "keyword matcher"
         avito = "настроен" if self.settings.has_avito else "не настроен, отключён из обязательного запуска"
         await update.message.reply_text(
             "ExpertBoat AI работает.\n"
