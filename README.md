@@ -1,74 +1,91 @@
 # ExpertBoat AI
 
-MVP Telegram-бота Expert Boat для ответов по Markdown-базе знаний. Бот запускается в Docker, хранит историю и RAG-индекс в SQLite, ищет ответы по локальному semantic-like scoring и, если есть ключ LLM, формулирует короткий ответ через DeepSeek или OpenAI строго по найденным фрагментам.
+Telegram-бот Expert Boat для ответов по Markdown-базе знаний. Проект запускается в Docker, хранит историю и RAG-индекс в SQLite, ищет ответы локально без платных embeddings и при наличии ключа LLM формулирует ответ через DeepSeek или OpenAI строго по найденным chunks.
 
-Если информации в базе знаний недостаточно, бот отвечает только:
+Если вопрос не относится к Expert Boat или информации недостаточно, бот отвечает:
 
 ```text
 Точный ответ передам специалисту Expert Boat.
 ```
 
-## Что умеет
+## Возможности
 
 - Telegram-бот на `python-telegram-bot`.
 - Markdown-база знаний в `knowledge/**/*.md`.
-- Локальный RAG без платных embeddings: Markdown режется на chunks и индексируется в SQLite.
-- YAML frontmatter для метаданных документов: `product`, `category`, `tags`, `priority`.
-- Алиасы и fuzzy search через `knowledge/aliases.yaml` и `rapidfuzz`.
+- Локальный guarded RAG pipeline без embeddings.
+- SQLite-таблицы для истории, памяти чата, статистики, chunks и search stats.
+- YAML frontmatter: `product`, `category`, `tags`, `priority`.
+- Алиасы из `knowledge/aliases.yaml` и fuzzy matching через `rapidfuzz`.
+- Intent classifier без LLM.
+- Off-topic guardrails для машин, медицины, бытовой техники, строительства, политики и других нерелевантных тем.
 - LLM получает только top chunks, а не весь документ.
-- Без LLM-ключей бот отвечает лучшим найденным chunk без Markdown.
-- SQLite хранит сообщения, последние 10 сообщений по каждому чату, статистику, chunks и search stats.
-- `/learn` добавляет новые вопрос-ответ пары в `knowledge/learned.md` и пересобирает индекс.
+- Клиентские ответы очищаются от Markdown: без `#`, `##`, `**`, backticks и frontmatter.
 
-## RAG
+## RAG Pipeline
 
-При старте приложение:
+Поиск построен так, чтобы история диалога не загрязняла первичную релевантность:
 
-1. Создает SQLite-таблицы.
-2. Загружает `knowledge/**/*.md`.
-3. Читает YAML frontmatter.
-4. Разбивает Markdown по заголовкам и абзацам.
-5. Сохраняет chunks в `knowledge_chunks`.
-6. Ищет по нормализованному запросу, алиасам, фразам, терминам, заголовкам, fuzzy match, близости слов и metadata.
+1. Нормализуется только текущий запрос.
+2. Алиасы раскрываются только для текущего запроса.
+3. Intent и `domain_relevance` считаются только по текущему запросу.
+4. Chunks ищутся только по текущему запросу.
+5. Если `domain_relevance=false`, intent `off_topic` или `top_score` ниже порога, бот возвращает fallback.
+6. История используется только вторым шагом для коротких уточнений вроде `а десятка?`, если предыдущий релевантный запрос был про товар.
 
-Основные таблицы:
+Intents:
+
+```text
+greeting
+product_lookup
+price
+availability
+delivery
+warranty
+payment
+firmware
+maps
+compatibility
+off_topic
+unknown
+```
+
+Domain vocabulary включает морскую электронику, Lowrance, Garmin, Simrad, эхолоты, картплоттеры, датчики, ActiveTarget, HDS, Elite FS, Eagle, Point-1, C-MAP, NMEA2000, Ethernet, русификацию, доставку, гарантию и оплату.
+
+Thresholds заданы в [app/config.py](app/config.py):
+
+```python
+RAG_MIN_SCORE = 18
+RAG_MIN_DOMAIN_SCORE = 1
+RAG_SHORT_QUERY_MAX_LEN = 20
+```
+
+## QueryContext
+
+Команда `/search <запрос>` показывает полный диагностический контекст:
+
+```text
+raw_query
+normalized_query
+expanded_query
+aliases_found
+intent
+domain_relevance
+used_history
+history_reason
+top_score
+fallback_reason
+```
+
+## SQLite
+
+Основные RAG-таблицы:
 
 ```text
 knowledge_chunks(id, source, title, content, content_hash, created_at)
 search_stats(id, query, method, top_score, created_at)
 ```
 
-Пример frontmatter:
-
-```yaml
----
-product: Lowrance Elite FS 9
-category: lowrance
-tags:
-  - 9фс
-  - elite fs 9
-  - эхолот
-priority: 10
----
-```
-
-## Команды Telegram
-
-```text
-/start              - приветствие
-/status             - статус LLM, docs, chunks, aliases и SQLite
-/reload             - перечитать Markdown, aliases.yaml и пересобрать RAG-индекс
-/reindex            - пересобрать RAG-индекс
-/ragstatus          - docs count, chunks count, дата последней индексации
-/stats              - статистика сообщений, найденных ответов, fallback и LLM
-/learn              - обучение: вопрос -> правильный ответ -> запись в learned.md -> reindex
-/search <запрос>    - диагностика RAG: top 5 chunks, score, source, title, method
-/aliases            - количество групп алиасов и первые 20 групп
-```
-
-Если `TELEGRAM_MANAGER_CHAT_ID` заполнен, admin-команды доступны только этому chat id. Если переменная пустая, admin-команды доступны всем.
-
-## Структура knowledge
+## Knowledge
 
 ```text
 knowledge/
@@ -88,33 +105,56 @@ knowledge/
     scripts.md
 ```
 
-## Локальный запуск
+Пример frontmatter:
 
-1. Создайте `.env`:
+```yaml
+---
+product: Lowrance Elite FS 9
+category: lowrance
+tags:
+  - 9фс
+  - elite fs 9
+  - эхолот
+priority: 10
+---
+```
+
+## Telegram Commands
+
+```text
+/start              - приветствие
+/status             - статус LLM, RAG, docs, chunks, aliases и SQLite
+/reload             - перечитать Markdown и aliases, затем пересобрать RAG-индекс
+/reindex            - пересобрать RAG-индекс
+/ragstatus          - состояние RAG, docs count, chunks count, дата индексации
+/stats              - статистика сообщений, найденных ответов, fallback и LLM
+/learn              - обучение: вопрос -> правильный ответ -> learned.md -> reindex
+/search <запрос>    - диагностика QueryContext и top 5 chunks
+/aliases            - количество групп алиасов и первые 20 групп
+```
+
+Если `TELEGRAM_MANAGER_CHAT_ID` заполнен, admin-команды доступны только этому chat id. Если переменная пустая, admin-команды доступны всем.
+
+## Локальный запуск
 
 ```bash
 cp .env.example .env
 ```
 
-2. Заполните минимум Telegram-токен:
+Минимально заполните:
 
 ```text
 TELEGRAM_BOT_TOKEN=123456:telegram-token
 ```
 
-3. Запустите:
+Запуск:
 
 ```bash
 docker compose up -d --build
-```
-
-4. Посмотрите логи:
-
-```bash
 docker compose logs -f
 ```
 
-## LLM-провайдеры
+## LLM Providers
 
 DeepSeek:
 
@@ -133,7 +173,7 @@ OPENAI_API_KEY=sk-...
 OPENAI_MODEL=gpt-4.1-mini
 ```
 
-Если `DEEPSEEK_API_KEY` и `OPENAI_API_KEY` не заполнены, бот продолжает работать через локальный RAG и возвращает лучший найденный фрагмент.
+Если LLM-ключи не заполнены, бот продолжает работать через локальный guarded RAG и возвращает лучший найденный chunk.
 
 ## Ubuntu 24.04 VPS
 
@@ -147,21 +187,21 @@ nano .env
 docker compose up -d --build
 ```
 
-Для обновления:
+Обновление:
 
 ```bash
 ./update.sh
 ```
 
-## Переменные окружения
+## Environment
 
-Обязательная для Telegram MVP:
+Обязательная переменная для Telegram MVP:
 
 | Переменная | Описание |
 | --- | --- |
 | `TELEGRAM_BOT_TOKEN` | Токен Telegram-бота от BotFather. |
 
-Опциональные:
+Опциональные переменные:
 
 | Переменная | Описание |
 | --- | --- |
@@ -178,7 +218,7 @@ docker compose up -d --build
 | `AVITO_CLIENT_SECRET` | Не обязателен для Telegram MVP. |
 | `AVITO_USER_ID` | Не обязателен для Telegram MVP. |
 
-## Docker volumes
+## Docker Volumes
 
 ```text
 ./data:/app/data
@@ -187,7 +227,7 @@ docker compose up -d --build
 
 SQLite хранится в `data/`, база знаний и aliases читаются из `knowledge/`. Команда `/learn` записывает новые знания в `knowledge/learned.md`.
 
-## Проверка
+## Tests
 
 ```bash
 python -m unittest tests.test_knowledge_search tests.test_rag_search

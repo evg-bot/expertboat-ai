@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from app.knowledge import KnowledgeBase
+from app.knowledge import KnowledgeBase, strip_markdown
 
 
 ALIASES_YAML = '''
@@ -63,6 +63,13 @@ class KnowledgeAliasSearchTest(unittest.TestCase):
 
     def test_point_1_alias(self) -> None:
         self.assert_alias_finds_title("point1", "Point-1")
+
+    def test_strip_markdown_removes_client_visible_markup(self) -> None:
+        text = "# Заголовок\n\n***\n\n## Подзаголовок\n\n**Ответ** клиенту"
+        cleaned = strip_markdown(text)
+        self.assertNotIn("#", cleaned)
+        self.assertNotIn("***", cleaned)
+        self.assertEqual("Заголовок\nПодзаголовок\nОтвет клиенту", cleaned)
 
 
 if __name__ == "__main__":

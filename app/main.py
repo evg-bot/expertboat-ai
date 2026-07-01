@@ -30,8 +30,11 @@ class ExpertBoatApp:
 
     async def run(self) -> None:
         await asyncio.to_thread(self.database.init)
-        chunks_count = await asyncio.to_thread(self.rag.reindex)
-        logger.info("Knowledge RAG index rebuilt: %s chunks", chunks_count)
+        try:
+            chunks_count = await asyncio.to_thread(self.rag.reindex)
+            logger.info("Knowledge RAG index rebuilt: %s chunks", chunks_count)
+        except Exception:
+            logger.exception("Knowledge RAG initialization failed")
 
         loop = asyncio.get_running_loop()
         with suppress(NotImplementedError):

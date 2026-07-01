@@ -10,6 +10,9 @@ import os
 BASE_DIR = Path(__file__).resolve().parent.parent
 PLACEHOLDER_PREFIXES = ("your-", "sk-your-")
 FALLBACK_ANSWER = "Точный ответ передам специалисту Expert Boat."
+RAG_MIN_SCORE = 18
+RAG_MIN_DOMAIN_SCORE = 1
+RAG_SHORT_QUERY_MAX_LEN = 20
 
 
 @dataclass(frozen=True)

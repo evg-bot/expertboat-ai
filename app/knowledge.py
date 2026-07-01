@@ -9,6 +9,46 @@ import yaml
 from rapidfuzz import fuzz
 
 FUZZY_THRESHOLD = 85
+STOP_WORDS = {
+    "а",
+    "без",
+    "бы",
+    "в",
+    "во",
+    "где",
+    "да",
+    "для",
+    "до",
+    "его",
+    "ее",
+    "если",
+    "есть",
+    "же",
+    "за",
+    "и",
+    "или",
+    "из",
+    "как",
+    "ко",
+    "ли",
+    "на",
+    "над",
+    "не",
+    "но",
+    "о",
+    "об",
+    "от",
+    "по",
+    "под",
+    "при",
+    "про",
+    "с",
+    "со",
+    "то",
+    "у",
+    "что",
+    "это",
+}
 
 
 @dataclass(frozen=True)
@@ -190,16 +230,24 @@ class KnowledgeBase:
     def _alias_matches(self, normalized_query: str) -> list[AliasMatch]:
         matches: list[AliasMatch] = []
         seen: set[tuple[str, str, str]] = set()
+        query_words = set(_words(normalized_query))
         for canonical, aliases in self.aliases.items():
             for alias in aliases:
                 normalized_alias = _normalize(alias)
                 if not normalized_alias:
                     continue
+                alias_words = set(_words(normalized_alias))
                 if _contains_phrase(normalized_query, normalized_alias):
                     key = (canonical, alias, "direct")
                     if key not in seen:
                         matches.append(AliasMatch(canonical, alias, 100, "direct"))
                         seen.add(key)
+                    continue
+                if not alias_words or not (query_words & alias_words):
+                    continue
+                alias_digits = set(re.findall(r"\d+", normalized_alias))
+                query_digits = set(re.findall(r"\d+", normalized_query))
+                if alias_digits and not alias_digits.issubset(query_digits):
                     continue
                 score = fuzz.partial_ratio(normalized_query, normalized_alias)
                 if score > FUZZY_THRESHOLD:
@@ -229,9 +277,12 @@ def strip_markdown(text: str) -> str:
         if in_code_block:
             cleaned_lines.append(line)
             continue
+        if re.fullmatch(r"[-*_]{3,}", line):
+            continue
         line = re.sub(r"^#{1,6}\s*", "", line)
         line = line.replace("**", "").replace("__", "")
         line = line.replace("`", "")
+        line = line.replace("***", "").replace("___", "")
         line = re.sub(r"^[-*+]\s+", "", line)
         if line:
             cleaned_lines.append(line)
@@ -264,7 +315,7 @@ def _normalize(text: str) -> str:
 
 
 def _words(text: str) -> list[str]:
-    return [word for word in text.split() if len(word) >= 2]
+    return [word for word in text.split() if len(word) >= 2 and word not in STOP_WORDS]
 
 
 def _phrases(text: str) -> list[str]:
