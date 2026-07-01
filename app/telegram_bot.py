@@ -7,11 +7,11 @@ from enum import Enum
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
-from app.ai import ExpertBoatAI
+from app.ai import GREETING_RESPONSE, ExpertBoatAI
 from app.config import Settings
 from app.database import Database
 from app.knowledge import KnowledgeBase, strip_markdown
-from app.rag import RAG_MIN_SCORE, RagEngine, RagSearchResult
+from app.rag import RAG_MIN_SCORE, RagEngine, RagSearchResult, classify_intent
 
 logger = logging.getLogger(__name__)
 
@@ -195,7 +195,10 @@ class ExpertBoatTelegramBot:
         memory = await asyncio.to_thread(self.database.get_recent_memory, chat_id=chat_id, limit=10)
 
         try:
-            if not await asyncio.to_thread(self.rag.is_ready):
+            current_query = self.knowledge_base.normalize_query(text)
+            if classify_intent(current_query) == "greeting":
+                answer, found, used_llm = GREETING_RESPONSE, True, False
+            elif not await asyncio.to_thread(self.rag.is_ready):
                 logger.error("RAG is not ready; refusing to answer through keyword matcher")
                 answer, found, used_llm = self.settings.ai_fallback_answer, False, False
             else:

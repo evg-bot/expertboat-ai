@@ -576,6 +576,8 @@ class RagEngine:
         normalized_current = _normalize(question)
         for item in reversed(history):
             text = str(item.get("text", "")).strip()
+            if text.startswith("/"):
+                continue
             if not text or _normalize(text) == normalized_current:
                 continue
             query = self.knowledge_base.normalize_query(text)

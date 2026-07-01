@@ -179,6 +179,11 @@ class RagSearchTest(unittest.TestCase):
         self.assertTrue(result.context.used_history)
         self.assertIn("Lowrance Elite FS 10", result.chunks[0].content)
 
+    def test_search_command_history_does_not_enable_refinement(self) -> None:
+        result = self.rag.search("А десятка?", history=[{"role": "user", "text": "/search 9фс"}], limit=5)
+        self.assertFalse(result.has_answer)
+        self.assertFalse(result.context.used_history)
+
     def test_off_topic_ignores_history_and_falls_back(self) -> None:
         result = self.rag.search(
             "Как заменить турбину на КамАЗе?",
