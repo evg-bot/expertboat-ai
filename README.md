@@ -1,28 +1,66 @@
-# ExpertBoat AI
+﻿# ExpertBoat AI
 
-AI-продавец для магазина морской электроники Expert Boat. MVP работает через официальный API Авито и Telegram-бота менеджера, хранит историю в SQLite и запускается в Docker Compose.
+MVP Telegram-бота Expert Boat для ответов по Markdown-базе знаний. Бот принимает вопросы в Telegram, ищет ответ в `knowledge/*.md`, использует OpenAI при наличии ключа и fallback keyword matcher без OpenAI.
 
-## Что внутри
+## Возможности
 
-- Python 3.12
-- Docker Compose
-- SQLite в `data/expertboat.db`
-- официальный Avito API OAuth + Messenger API
-- Telegram manager bot на `python-telegram-bot`
-- Markdown-база знаний в `knowledge/`
-- OpenAI SDK
+- Telegram-бот на `python-telegram-bot`.
+- Ответы по Markdown-базе знаний из папки `knowledge/`.
+- OpenAI API, модель из `OPENAI_MODEL`, по умолчанию `gpt-4.1-mini`.
+- Если `OPENAI_API_KEY` не заполнен, используется простой keyword matcher по базе знаний.
+- Если точного ответа нет, бот отвечает:
 
-## Быстрый запуск после git clone
+```text
+Точный ответ передам специалисту Expert Boat.
+```
 
-Проект поднимается без ручных правок конфигурации:
+- Avito API временно не участвует в обязательном запуске. Если `AVITO_CLIENT_ID`, `AVITO_CLIENT_SECRET` и `AVITO_USER_ID` не заполнены, Telegram MVP всё равно работает.
+- SQLite хранит историю Telegram-диалогов.
+
+## Команды Telegram
+
+```text
+/start   - приветствие
+/status  - режим работы, OpenAI/keyword matcher, статус Avito
+/reload  - перечитать Markdown-базу знаний
+```
+
+## Быстрый локальный запуск
+
+1. Создайте `.env` на основе примера:
+
+```bash
+cp .env.example .env
+```
+
+2. Заполните минимум Telegram-токен:
+
+```text
+TELEGRAM_BOT_TOKEN=123456:telegram-token
+```
+
+3. При желании заполните OpenAI:
+
+```text
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4.1-mini
+```
+
+Без `OPENAI_API_KEY` бот будет отвечать через keyword matcher по `knowledge/*.md`.
+
+4. Запустите:
 
 ```bash
 docker compose up -d --build
 ```
 
-Если реальные секреты ещё не заданы, контейнер стартует в безопасном режиме ожидания и создаёт SQLite-таблицы. Для рабочей интеграции заполните `.env` реальными значениями и перезапустите сервис.
+5. Проверьте логи:
 
-## Установка на Ubuntu 24.04 VPS
+```bash
+docker compose logs -f
+```
+
+## Запуск на Ubuntu 24.04 VPS
 
 1. Подключитесь к серверу:
 
@@ -30,7 +68,7 @@ docker compose up -d --build
 ssh root@SERVER_IP
 ```
 
-2. Установите Git, если его ещё нет:
+2. Установите Git:
 
 ```bash
 apt-get update && apt-get install -y git
@@ -39,7 +77,7 @@ apt-get update && apt-get install -y git
 3. Склонируйте проект:
 
 ```bash
-git clone <REPOSITORY_URL> expertboat-ai
+git clone https://github.com/evg-bot/expertboat-ai.git
 cd expertboat-ai
 ```
 
@@ -49,15 +87,19 @@ cd expertboat-ai
 sudo ./install.sh
 ```
 
-Скрипт установит Docker Engine и Docker Compose plugin, создаст папки `data/` и `knowledge/`, создаст `.env` из `.env.example`, соберёт и запустит контейнер.
-
-5. Заполните `.env` реальными ключами:
+5. Заполните `.env`:
 
 ```bash
 nano .env
 ```
 
-6. Перезапустите сервис:
+Минимум для работы Telegram MVP:
+
+```text
+TELEGRAM_BOT_TOKEN=123456:telegram-token
+```
+
+6. Перезапустите контейнер:
 
 ```bash
 docker compose up -d --build
@@ -69,79 +111,54 @@ docker compose up -d --build
 ./update.sh
 ```
 
-Скрипт выполнит `git pull --ff-only`, пересоберёт контейнер и удалит неиспользуемые Docker-образы.
+## Переменные окружения
 
-## Команды эксплуатации
+Обязательные для Telegram MVP:
 
-Логи:
+| Переменная | Описание |
+| --- | --- |
+| `TELEGRAM_BOT_TOKEN` | Токен Telegram-бота от BotFather. |
 
-```bash
-docker compose logs -f
-```
+Опциональные:
 
-Статус:
+| Переменная | Описание |
+| --- | --- |
+| `OPENAI_API_KEY` | API ключ OpenAI. Если пустой, используется keyword matcher. |
+| `OPENAI_MODEL` | Модель OpenAI, по умолчанию `gpt-4.1-mini`. |
+| `DATABASE_PATH` | Путь к SQLite базе, по умолчанию `data/expertboat.db`. |
+| `KNOWLEDGE_DIR` | Путь к Markdown-базе знаний, по умолчанию `knowledge`. |
+| `AVITO_CLIENT_ID` | Необязателен для Telegram MVP. |
+| `AVITO_CLIENT_SECRET` | Необязателен для Telegram MVP. |
+| `AVITO_USER_ID` | Необязателен для Telegram MVP. |
 
-```bash
-docker compose ps
-```
+## База знаний
 
-Остановка:
-
-```bash
-docker compose down
-```
-
-Перезапуск:
-
-```bash
-docker compose restart
-```
-
-## Обязательные переменные `.env`
-
-Для полноценной работы заполните:
+Основная база знаний лежит в папке `knowledge/`. В проект добавлен файл:
 
 ```text
-OPENAI_API_KEY
-AVITO_CLIENT_ID
-AVITO_CLIENT_SECRET
-AVITO_USER_ID
-TELEGRAM_BOT_TOKEN
-TELEGRAM_MANAGER_CHAT_ID
+knowledge/faq.md
 ```
 
-Остальные переменные можно оставить по умолчанию:
+После изменения Markdown-файлов отправьте боту команду:
 
 ```text
-APP_ENV=production
-LOG_LEVEL=INFO
-DATABASE_PATH=data/expertboat.db
-KNOWLEDGE_DIR=knowledge
-OPENAI_MODEL=gpt-4.1-mini
-AVITO_API_BASE_URL=https://api.avito.ru
-AVITO_POLL_INTERVAL_SECONDS=5
+/reload
 ```
 
-## Docker Compose и тома
-
-`docker-compose.yml` использует bind mounts:
+## Docker volumes
 
 ```text
 ./data:/app/data
 ./knowledge:/app/knowledge:ro
 ```
 
-Это означает:
+SQLite сохраняется в `data/`, база знаний читается из `knowledge/`.
 
-- SQLite база сохраняется на хосте в `data/` и переживает пересборку контейнера.
-- Markdown-база знаний читается из `knowledge/` без пересборки образа.
-- Секреты берутся из `.env`, если он создан. Без `.env` используются безопасные placeholder-значения, и приложение стартует в режиме ожидания.
+## Полезные команды
 
-## Цикл обработки сообщений
-
-1. Приложение каждые `AVITO_POLL_INTERVAL_SECONDS` секунд проверяет новые входящие сообщения Авито.
-2. Новое сообщение сохраняется в SQLite.
-3. Менеджеру отправляется Telegram-уведомление с inline-кнопками `Ответить` и `Игнорировать`.
-4. После нажатия `Ответить` следующее сообщение менеджера отправляется в соответствующий чат Авито.
-5. Успешный ответ сохраняется в SQLite.
-6. Ошибка отправки приходит менеджеру в Telegram.
+```bash
+docker compose ps
+docker compose logs -f
+docker compose restart
+docker compose down
+```

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,6 +9,7 @@ import os
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 PLACEHOLDER_PREFIXES = ("your-", "sk-your-")
+FALLBACK_ANSWER = "Точный ответ передам специалисту Expert Boat."
 
 
 @dataclass(frozen=True)
@@ -31,19 +32,18 @@ class Settings:
     telegram_bot_token: str
     telegram_manager_chat_id: str
 
-    ai_fallback_answer: str = "Ваш вопрос передан специалисту Expert Boat."
+    ai_fallback_answer: str = FALLBACK_ANSWER
 
     @property
-    def is_configured(self) -> bool:
-        required_values = (
-            self.openai_api_key,
-            self.avito_client_id,
-            self.avito_client_secret,
-            self.avito_user_id,
-            self.telegram_bot_token,
-            self.telegram_manager_chat_id,
+    def has_openai(self) -> bool:
+        return _is_real_value(self.openai_api_key)
+
+    @property
+    def has_avito(self) -> bool:
+        return all(
+            _is_real_value(value)
+            for value in (self.avito_client_id, self.avito_client_secret, self.avito_user_id)
         )
-        return all(_is_real_value(value) for value in required_values)
 
 
 def _is_real_value(value: str) -> bool:
@@ -53,11 +53,8 @@ def _is_real_value(value: str) -> bool:
     return not normalized.startswith(PLACEHOLDER_PREFIXES)
 
 
-def _required(name: str) -> str:
-    value = os.getenv(name)
-    if not value:
-        raise RuntimeError(f"Missing required environment variable: {name}")
-    return value
+def _env(name: str, default: str = "") -> str:
+    return os.getenv(name, default)
 
 
 def _int_env(name: str, default: int) -> int:
@@ -74,17 +71,17 @@ def load_settings() -> Settings:
     load_dotenv(BASE_DIR / ".env")
 
     return Settings(
-        app_env=os.getenv("APP_ENV", "production"),
-        log_level=os.getenv("LOG_LEVEL", "INFO"),
-        database_path=BASE_DIR / os.getenv("DATABASE_PATH", "data/expertboat.db"),
-        knowledge_dir=BASE_DIR / os.getenv("KNOWLEDGE_DIR", "knowledge"),
-        openai_api_key=_required("OPENAI_API_KEY"),
-        openai_model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
-        avito_client_id=_required("AVITO_CLIENT_ID"),
-        avito_client_secret=_required("AVITO_CLIENT_SECRET"),
-        avito_user_id=_required("AVITO_USER_ID"),
-        avito_api_base_url=os.getenv("AVITO_API_BASE_URL", "https://api.avito.ru"),
+        app_env=_env("APP_ENV", "production"),
+        log_level=_env("LOG_LEVEL", "INFO"),
+        database_path=BASE_DIR / _env("DATABASE_PATH", "data/expertboat.db"),
+        knowledge_dir=BASE_DIR / _env("KNOWLEDGE_DIR", "knowledge"),
+        openai_api_key=_env("OPENAI_API_KEY"),
+        openai_model=_env("OPENAI_MODEL", "gpt-4.1-mini"),
+        avito_client_id=_env("AVITO_CLIENT_ID"),
+        avito_client_secret=_env("AVITO_CLIENT_SECRET"),
+        avito_user_id=_env("AVITO_USER_ID"),
+        avito_api_base_url=_env("AVITO_API_BASE_URL", "https://api.avito.ru"),
         avito_poll_interval_seconds=_int_env("AVITO_POLL_INTERVAL_SECONDS", 5),
-        telegram_bot_token=_required("TELEGRAM_BOT_TOKEN"),
-        telegram_manager_chat_id=_required("TELEGRAM_MANAGER_CHAT_ID"),
+        telegram_bot_token=_env("TELEGRAM_BOT_TOKEN"),
+        telegram_manager_chat_id=_env("TELEGRAM_MANAGER_CHAT_ID"),
     )

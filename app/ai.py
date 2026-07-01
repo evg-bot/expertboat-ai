@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from openai import AsyncOpenAI
 
@@ -11,13 +11,17 @@ class ExpertBoatAI:
     def __init__(self, settings: Settings, knowledge_base: KnowledgeBase) -> None:
         self.settings = settings
         self.knowledge_base = knowledge_base
-        self.client = AsyncOpenAI(api_key=settings.openai_api_key)
+        self.client = AsyncOpenAI(api_key=settings.openai_api_key) if settings.has_openai else None
 
-    async def answer(self, question: str, history: list[StoredMessage]) -> str:
+    async def answer(self, question: str, history: list[StoredMessage] | None = None) -> str:
         knowledge = self.knowledge_base.load_markdown()
         if not knowledge.strip():
             return self.settings.ai_fallback_answer
 
+        if self.client is None:
+            return self.knowledge_base.keyword_answer(question) or self.settings.ai_fallback_answer
+
+        history = history or []
         history_text = "\n".join(
             f"{message.direction}: {message.text}" for message in history[-10:]
         )
@@ -29,19 +33,18 @@ class ExpertBoatAI:
                 {
                     "role": "system",
                     "content": (
-                        "Ты AI-продавец магазина морской электроники Expert Boat. "
+                        "Ты Telegram-бот магазина морской электроники Expert Boat. "
                         "Отвечай только на русском языке и только на основании базы знаний ниже. "
                         "Если в базе знаний нет точного ответа, верни ровно эту фразу без дополнений: "
                         f"{self.settings.ai_fallback_answer}\n\n"
-                        "Не выдумывай характеристики, цены, наличие, сроки доставки, гарантии или условия. "
-                        "Не используй знания вне базы знаний."
+                        "Не выдумывай характеристики, цены, наличие, сроки доставки, гарантии или условия."
                     ),
                 },
                 {
                     "role": "user",
                     "content": (
                         f"БАЗА ЗНАНИЙ:\n{knowledge}\n\n"
-                        f"ИСТОРИЯ ПЕРЕПИСКИ:\n{history_text}\n\n"
+                        f"ИСТОРИЯ ДИАЛОГА:\n{history_text}\n\n"
                         f"ВОПРОС КЛИЕНТА:\n{question}"
                     ),
                 },
@@ -49,6 +52,4 @@ class ExpertBoatAI:
         )
 
         answer = (response.choices[0].message.content or "").strip()
-        if not answer:
-            return self.settings.ai_fallback_answer
-        return answer
+        return answer or self.settings.ai_fallback_answer
