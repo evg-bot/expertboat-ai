@@ -82,6 +82,38 @@ class ListingBuilderTests(unittest.TestCase):
             self.assertEqual(cleaned[0]["title"], "Lowrance Elite FS 9 + датчик 3-in-1 26.2 RUS")
             self.assertEqual(cleaned[0]["price"], 89900)
 
+    def test_fallback_merges_duplicate_title_price_chat_urls(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            data_dir = Path(tmp)
+            qa_path = data_dir / "processed" / "avito_qa.jsonl"
+            qa_path.parent.mkdir(parents=True)
+            rows = [
+                {
+                    "chat_url": f"https://www.avito.ru/profile/messenger/channel/{index}",
+                    "listing_title": "Lowrance Elite FS 9 + датчик 3-in-1 26.2 RUS",
+                    "listing_price": "89 900 ₽",
+                    "question": "Цена?",
+                    "answer": "Цена по объявлению — 89 900 ₽.",
+                    "source": "avito",
+                }
+                for index in range(1, 4)
+            ]
+            qa_path.write_text(
+                "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
+                encoding="utf-8",
+            )
+
+            stats = import_listings(data_dir=data_dir)
+            cleaned = load_jsonl(data_dir / "listings" / "listings_cleaned.jsonl")
+            attributes = json.loads(cleaned[0]["attributes_json"])
+
+            self.assertEqual(stats.fallback_listings_from_qa, 1)
+            self.assertEqual(stats.duplicate_fallback_rows_merged, 2)
+            self.assertEqual(stats.unique_listings_exported, 1)
+            self.assertEqual(len(cleaned), 1)
+            self.assertEqual(cleaned[0]["url"], "")
+            self.assertEqual(len(attributes["chat_urls"]), 3)
+
     def test_price_question_uses_listing_price_instead_of_short_seller_answer(self):
         rows = [
             {

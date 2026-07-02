@@ -96,6 +96,8 @@ class ListingImportStats:
     updated: int
     unchanged: int
     history_changes: int
+    unique_listings_exported: int
+    duplicate_fallback_rows_merged: int
     sqlite_path: Path
     cleaned_output: Path
 
@@ -288,14 +290,13 @@ def normalize_listing(raw: dict[str, Any], *, now: str | None = None) -> Listing
     fields = extract_title_fields(title)
     content_hash = content_hash_for_listing(
         {
-            "url": url,
             "title": title,
             "price": price,
             "price_text": price_text,
             "status": status,
             "description": description,
             "photos": photos,
-            "attributes": attributes,
+            "attributes": attributes_for_content_hash(attributes),
             **fields,
         }
     )
@@ -329,31 +330,50 @@ def content_hash_for_listing(payload: dict[str, Any]) -> str:
     return hashlib.sha1(encoded).hexdigest()
 
 
+def attributes_for_content_hash(attributes: Any) -> Any:
+    if not isinstance(attributes, dict):
+        return attributes
+    return {key: value for key, value in attributes.items() if key != "chat_urls"}
+
+
 def fallback_listings_from_qa(path: Path) -> list[dict[str, Any]]:
     rows = load_jsonl(path)
-    seen: set[tuple[str, str, str]] = set()
-    listings: list[dict[str, Any]] = []
+    grouped: dict[tuple[str, str], dict[str, Any]] = {}
     for row in rows:
         title = normalize_title(row.get("listing_title") or "")
         price_text = str(row.get("listing_price") or "").strip()
         chat_url = str(row.get("chat_url") or "").strip()
         if not title or not price_text:
             continue
-        key = (title.casefold(), price_text, chat_url)
-        if key in seen:
-            continue
-        seen.add(key)
-        listings.append(
+        key = (title.casefold(), price_text)
+        listing = grouped.setdefault(
+            key,
             {
-                "url": chat_url,
+                "url": "",
                 "title": title,
                 "price": price_text,
                 "status": "unknown",
                 "photos": [],
-                "attributes": {"source": "avito_qa_fallback"},
-            }
+                "attributes": {"source": "avito_qa_fallback", "chat_urls": []},
+            },
         )
-    return listings
+        if chat_url and chat_url not in listing["attributes"]["chat_urls"]:
+            listing["attributes"]["chat_urls"].append(chat_url)
+    return list(grouped.values())
+
+
+def count_fallback_duplicate_rows(path: Path) -> int:
+    rows = load_jsonl(path)
+    total = 0
+    unique: set[tuple[str, str]] = set()
+    for row in rows:
+        title = normalize_title(row.get("listing_title") or "")
+        price_text = str(row.get("listing_price") or "").strip()
+        if not title or not price_text:
+            continue
+        total += 1
+        unique.add((title.casefold(), price_text))
+    return max(total - len(unique), 0)
 
 
 def existing_listing(db: sqlite3.Connection, listing_id: str) -> dict[str, Any] | None:
@@ -428,6 +448,21 @@ def upsert_listings(db_path: Path, listings: list[ListingRecord]) -> tuple[int, 
     return inserted, updated, unchanged, history
 
 
+def export_listings_from_sqlite(db_path: Path, output_path: Path) -> int:
+    ensure_listing_schema(db_path)
+    with sqlite3.connect(db_path) as db:
+        db.row_factory = sqlite3.Row
+        rows = db.execute(
+            """
+            SELECT *
+            FROM listings
+            ORDER BY updated_at DESC, title ASC
+            """
+        ).fetchall()
+    write_jsonl(output_path, [dict(row) for row in rows])
+    return len(rows)
+
+
 def import_listings(*, data_dir: Path | None = None) -> ListingImportStats:
     data_root = ensure_external_data_directories(data_dir)
     listings_output_dir = listings_dir(data_root)
@@ -440,16 +475,18 @@ def import_listings(*, data_dir: Path | None = None) -> ListingImportStats:
         raw_rows = load_jsonl(raw_input)
         input_source = str(raw_input)
         fallback_count = 0
+        duplicate_fallback_rows_merged = 0
     else:
         raw_rows = fallback_listings_from_qa(qa_input)
         input_source = str(qa_input)
         fallback_count = len(raw_rows)
+        duplicate_fallback_rows_merged = count_fallback_duplicate_rows(qa_input)
 
     now = datetime.now(timezone.utc).isoformat()
     records = [normalize_listing(row, now=now) for row in raw_rows if normalize_title(row.get("title") or row.get("listing_title") or "")]
     inserted, updated, unchanged, history = upsert_listings(db_path, records)
     cleaned_output = cleaned_path(data_root)
-    write_jsonl(cleaned_output, [asdict(record) for record in records])
+    unique_exported = export_listings_from_sqlite(db_path, cleaned_output)
     if history:
         with history_jsonl_path(data_root).open("a", encoding="utf-8") as fh:
             for row in history:
@@ -464,6 +501,8 @@ def import_listings(*, data_dir: Path | None = None) -> ListingImportStats:
         updated=updated,
         unchanged=unchanged,
         history_changes=len(history),
+        unique_listings_exported=unique_exported,
+        duplicate_fallback_rows_merged=duplicate_fallback_rows_merged,
         sqlite_path=db_path,
         cleaned_output=cleaned_output,
     )
@@ -479,6 +518,8 @@ def main() -> int:
     print(f"Updated: {stats.updated}")
     print(f"Unchanged: {stats.unchanged}")
     print(f"History changes: {stats.history_changes}")
+    print(f"Unique listings exported: {stats.unique_listings_exported}")
+    print(f"Duplicate fallback rows merged: {stats.duplicate_fallback_rows_merged}")
     print(f"SQLite path: {stats.sqlite_path}")
     print(f"Cleaned output: {stats.cleaned_output}")
     return 0
