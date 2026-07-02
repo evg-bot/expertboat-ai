@@ -49,10 +49,13 @@ class KnowledgeBuilderTests(unittest.TestCase):
                 "source": "avito",
                 "chat_url": "https://www.avito.ru/profile/messenger/channel/1",
                 "text": (
-                    "Для бизнеса Карьера в Авито Мои объявления Избранное Уведомления Сообщения "
+                    "Еще Разместить объявление 4 Авто Недвижимость Работа Услуги Еще Василий Сазанов "
+                    "Кошелек 20 ₽ Для бизнеса Карьера в Авито Мои объявления Избранное Уведомления Сообщения "
                     "Lowrance Elite FS 9 + датчик 3-in-1 26.2 RUS 89 900 ₽ "
-                    "13 мая 2026 г. 10:15 Здравствуйте, Genesis Live есть? Прочитано "
-                    "10:17 Добрый день. Палитра есть, Genesis Live работает. Наши контакты отправим. "
+                    "13 мая 2026 г. 10:15 Добрый день, скажите пожалуйста, что имеется в виду под настройкой genesis live, "
+                    "ее надо регистрировать? Прочитано "
+                    "10:17 Добрый день. Палитра и наложение. Регистрировать ничего не нужно. "
+                    "10:18 Авито — сайт объявлений России ООО «КЕХ еКоммерц» Карта сайта Свежие объявления "
                     "Помощь Безопасность Реклама на сайте О компании Авито Журнал"
                 ),
             }
@@ -64,6 +67,8 @@ class KnowledgeBuilderTests(unittest.TestCase):
         self.assertEqual(stats.parsed_messages, 2)
         self.assertEqual(stats.buyer_messages, 1)
         self.assertEqual(stats.seller_messages, 1)
+        self.assertEqual(stats.listing_title_detected, 1)
+        self.assertEqual(stats.skipped_footer_messages, 1)
         self.assertEqual(stats.qa_pairs, 1)
         self.assertEqual(messages[0].listing_title, "Lowrance Elite FS 9 + датчик 3-in-1 26.2 RUS")
         self.assertEqual(messages[0].listing_price, "89 900 ₽")
@@ -71,9 +76,14 @@ class KnowledgeBuilderTests(unittest.TestCase):
         self.assertEqual(messages[0].time, "10:15")
         self.assertEqual(messages[0].sender, "buyer")
         self.assertEqual(messages[1].sender, "seller")
-        self.assertIn("Genesis Live", pairs[0]["question"])
-        self.assertIn("Палитра", pairs[0]["answer"])
+        self.assertEqual(
+            pairs[0]["question"],
+            "Добрый день, скажите пожалуйста, что имеется в виду под настройкой genesis live, ее надо регистрировать?",
+        )
+        self.assertEqual(pairs[0]["answer"], "Добрый день. Палитра и наложение. Регистрировать ничего не нужно.")
+        self.assertEqual(pairs[0]["listing_title"], "Lowrance Elite FS 9 + датчик 3-in-1 26.2 RUS")
         self.assertEqual(pairs[0]["source"], "avito")
+        self.assertFalse(any("Авито — сайт объявлений России" in message.text for message in messages))
 
     def test_avito_page_text_lowrance_elite_fs_10_invoice_unavailable(self):
         rows = [
@@ -101,6 +111,46 @@ class KnowledgeBuilderTests(unittest.TestCase):
         self.assertEqual(messages[0].date, "Вторник, 30 июня")
         self.assertEqual(pairs[0]["question"], "Добрый день, выставите счет ИП?")
         self.assertIn("нет в наличии", pairs[0]["answer"])
+
+    def test_avito_s_kakogo_order_not_seen_is_seller(self):
+        rows = [
+            {
+                "source": "avito",
+                "chat_url": "https://www.avito.ru/profile/messenger/channel/3",
+                "text": (
+                    "Lowrance Elite FS 10 + датчик AI 3-in-1 26.2 RUS 135 000 ₽ "
+                    "13 мая 2026 г. 12:00 Я оплатил заказ, он появился? "
+                    "12:02 С какого? Мы заказ ни какой не видим"
+                ),
+            }
+        ]
+
+        messages, pairs, stats = process_rows(rows)
+
+        self.assertEqual(stats.seller_messages, 1)
+        self.assertEqual(messages[1].sender, "seller")
+        self.assertEqual(pairs[0]["answer"], "С какого? Мы заказ ни какой не видим")
+
+    def test_avito_listing_metadata_message_is_skipped(self):
+        rows = [
+            {
+                "source": "avito",
+                "chat_url": "https://www.avito.ru/profile/messenger/channel/4",
+                "text": (
+                    "Lowrance Elite FS 10 + датчик AI 3-in-1 26.2 RUS 135 000 ₽ "
+                    "13 мая 2026 г. 12:00 Lowrance Elite FS 10 + датчик AI 3-in-1 26.2 RUS 135 000 ₽ "
+                    "12:01 Когда будет в наличии? "
+                    "12:02 На днях ожидаем"
+                ),
+            }
+        ]
+
+        messages, pairs, stats = process_rows(rows)
+
+        self.assertEqual(stats.skipped_listing_metadata_messages, 1)
+        self.assertEqual(len(messages), 2)
+        self.assertFalse(any(message.text == "Lowrance Elite FS 10 + датчик AI 3-in-1 26.2 RUS 135 000 ₽" for message in messages))
+        self.assertEqual(pairs[0]["listing_title"], "Lowrance Elite FS 10 + датчик AI 3-in-1 26.2 RUS")
 
     def test_avito_support_dialog_is_skipped(self):
         rows = [
