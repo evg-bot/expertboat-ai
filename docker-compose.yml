@@ -8,6 +8,7 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       DATABASE_PATH: ${DATABASE_PATH:-data/expertboat.db}
       KNOWLEDGE_DIR: ${KNOWLEDGE_DIR:-knowledge}
+      EXPERTBOAT_DATA_DIR: /data/expertboat-data
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-your-telegram-bot-token}
       TELEGRAM_MANAGER_CHAT_ID: ${TELEGRAM_MANAGER_CHAT_ID:-}
       LLM_PROVIDER: ${LLM_PROVIDER:-openai}
@@ -24,3 +25,4 @@ services:
     volumes:
       - ./data:/app/data
       - ./knowledge:/app/knowledge
+      - ${EXPERTBOAT_DATA_DIR:-./external-data}:/data/expertboat-data

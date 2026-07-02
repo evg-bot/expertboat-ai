@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import re
+import shutil
 import sqlite3
 import sys
 from collections import Counter
@@ -18,10 +19,15 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app.config import BASE_DIR, load_settings
+from app.config import BASE_DIR, expertboat_data_dir, load_settings
 from app.database import Database
 from app.knowledge import KnowledgeBase
-from app.knowledge_import_status import IMPORT_HISTORY_PATH, ensure_import_history, record_import_run
+from app.knowledge_import_status import (
+    ensure_external_data_directories,
+    ensure_import_history,
+    import_history_path,
+    record_import_run,
+)
 from app.rag import RagEngine
 
 SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".txt", ".md", ".json", ".jsonl"}
@@ -33,6 +39,7 @@ CATEGORY_KEYWORDS = {
     "FLIR": ("flir", "thermal", "тепловизор"),
     "Minn Kota": ("minn kota", "ultrex", "ulterra", "terrova"),
     "Mercury": ("mercury", "меркури", "vesselview"),
+    "Yamaha": ("yamaha", "ямаха", "outboard"),
     "Sales": ("цена", "купить", "оплата", "скидка", "заказ"),
     "Support": ("гарантия", "сервис", "ремонт", "поддержка", "настройка"),
     "FAQ": ("вопрос", "ответ", "faq", "часто задаваемые"),
@@ -50,32 +57,55 @@ class ImportResult:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Import documents from knowledge/inbox into processed knowledge.")
-    parser.add_argument("--no-rag", action="store_true", help="Do not rebuild SQLite RAG index after import.")
+    parser = argparse.ArgumentParser(description="Import external Expert Boat knowledge data.")
+    parser.add_argument(
+        "--source",
+        choices=("manuals", "avito", "telegram", "all"),
+        default="manuals",
+        help="External source to import.",
+    )
+    parser.add_argument("--publish", action="store_true", help="Copy processed Markdown into knowledge/manuals.")
+    parser.add_argument("--no-rag", action="store_true", help="Do not rebuild SQLite RAG index after publish.")
     args = parser.parse_args()
 
-    ensure_directories()
-    ensure_import_history()
+    data_dir = ensure_external_data_directories()
+    ensure_import_history(import_history_path(data_dir))
 
-    results = import_inbox(update_rag=not args.no_rag)
-    print_summary(results)
+    results = import_sources(
+        source=args.source,
+        data_dir=data_dir,
+        publish=args.publish,
+        update_rag=not args.no_rag,
+    )
+    print_summary(results, data_dir)
 
 
-def import_inbox(*, update_rag: bool = True) -> list[ImportResult]:
-    inbox_dir = BASE_DIR / "knowledge" / "inbox"
-    files = [path for path in sorted(inbox_dir.rglob("*")) if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS]
+def import_sources(
+    *,
+    source: str = "manuals",
+    data_dir: Path | None = None,
+    publish: bool = False,
+    update_rag: bool = True,
+) -> list[ImportResult]:
+    data_root = ensure_external_data_directories(data_dir or expertboat_data_dir())
+    db_path = ensure_import_history(import_history_path(data_root))
 
     results: list[ImportResult] = []
-    for path in files:
-        result = import_file(path)
-        results.append(result)
+    if source in {"manuals", "all"}:
+        results.extend(import_document_tree(data_root / "manuals", data_root=data_root, db_path=db_path))
+    if source in {"telegram", "all"}:
+        results.extend(import_document_tree(data_root / "telegram", data_root=data_root, db_path=db_path))
+    if source in {"avito", "all"}:
+        results.extend(run_avito_import(data_root))
 
-    if update_rag and any(result.status == "processed" for result in results):
-        settings = load_settings()
-        database = Database(settings.database_path)
-        database.init()
-        knowledge_base = KnowledgeBase(settings.knowledge_dir)
-        RagEngine(database, knowledge_base).reindex()
+    if publish:
+        publish_processed_markdown(data_root)
+        if update_rag:
+            settings = load_settings()
+            database = Database(settings.database_path)
+            database.init()
+            knowledge_base = KnowledgeBase(settings.knowledge_dir)
+            RagEngine(database, knowledge_base).reindex()
 
     counts = Counter(result.status for result in results)
     record_import_run(
@@ -83,18 +113,48 @@ def import_inbox(*, update_rag: bool = True) -> list[ImportResult]:
         new_count=counts.get("processed", 0),
         skipped_count=counts.get("skipped", 0),
         errors_count=counts.get("error", 0),
+        db_path=db_path,
     )
 
     return results
 
 
-def import_file(path: Path) -> ImportResult:
+def import_document_tree(root: Path, *, data_root: Path, db_path: Path) -> list[ImportResult]:
+    files = [
+        path
+        for path in sorted(root.rglob("*"))
+        if path.is_file() and path.suffix.casefold() in SUPPORTED_EXTENSIONS
+    ]
+    return [import_file(path, data_root=data_root, db_path=db_path) for path in files]
+
+
+def run_avito_import(data_root: Path) -> list[ImportResult]:
+    from scripts import import_avito
+
+    rows = import_avito.load_jsonl(import_avito.input_path(data_root))
+    messages, qa_pairs = import_avito.process_rows(rows)
+    import_avito.write_jsonl(import_avito.cleaned_path(data_root), [message.__dict__ for message in messages])
+    import_avito.write_jsonl(import_avito.processed_path(data_root), qa_pairs)
+    return [
+        ImportResult(
+            filename=str(import_avito.input_path(data_root).name),
+            sha256="",
+            document_type="jsonl",
+            chunks_count=len(qa_pairs),
+            status="processed" if rows else "skipped",
+        )
+    ]
+
+
+def import_file(path: Path, *, data_root: Path | None = None, db_path: Path | None = None) -> ImportResult:
+    data_root = data_root or ensure_external_data_directories()
+    db_path = db_path or import_history_path(data_root)
     file_hash = sha256_file(path)
     document_type = path.suffix.lower().lstrip(".")
 
-    if is_known_hash(file_hash):
+    if is_known_hash(file_hash, db_path=db_path):
         result = ImportResult(path.name, file_hash, document_type, 0, "skipped")
-        record_import(result)
+        record_import(result, db_path=db_path)
         return result
 
     try:
@@ -102,36 +162,18 @@ def import_file(path: Path) -> ImportResult:
         cleaned_text = clean_text(raw_text)
         if not cleaned_text:
             raise ValueError("No text extracted")
-        category = detect_category(cleaned_text, fallback="FAQ")
+        category = detect_category(cleaned_text, fallback=category_from_path(path))
         markdown = build_markdown(path, file_hash, category, cleaned_text)
-        processed_path = write_processed_markdown(path, category, markdown)
+        processed_path = write_processed_markdown(path, category, markdown, data_root=data_root)
         chunks = split_chunks(cleaned_text)
-        write_chunks(processed_path, category, chunks)
+        write_chunks(processed_path, category, chunks, data_root=data_root)
         result = ImportResult(path.name, file_hash, document_type, len(chunks), "processed")
-        record_import(result)
+        record_import(result, db_path=db_path)
         return result
     except Exception as exc:
         result = ImportResult(path.name, file_hash, document_type, 0, "error", str(exc))
-        record_import(result)
+        record_import(result, db_path=db_path)
         return result
-
-
-def ensure_directories() -> None:
-    directories = [
-        BASE_DIR / "data" / "raw" / "avito",
-        BASE_DIR / "data" / "raw" / "telegram",
-        BASE_DIR / "data" / "raw" / "notebook",
-        BASE_DIR / "data" / "cleaned",
-        BASE_DIR / "data" / "faq",
-        BASE_DIR / "data" / "processed",
-        BASE_DIR / "knowledge" / "inbox",
-        BASE_DIR / "knowledge" / "manuals",
-        BASE_DIR / "knowledge" / "processed",
-        BASE_DIR / "knowledge" / "chunks",
-        BASE_DIR / "knowledge" / "review",
-    ]
-    for directory in directories:
-        directory.mkdir(parents=True, exist_ok=True)
 
 
 def extract_text(path: Path) -> str:
@@ -244,6 +286,14 @@ def detect_category(text: str, *, fallback: str = "FAQ") -> str:
     return category if score > 0 else fallback
 
 
+def category_from_path(path: Path) -> str:
+    parts = {part.casefold() for part in path.parts}
+    for category in CATEGORY_KEYWORDS:
+        if category.casefold().replace(" ", "") in parts or category.casefold() in parts:
+            return category
+    return "FAQ"
+
+
 def build_markdown(path: Path, file_hash: str, category: str, text: str) -> str:
     title = guess_title(path, text)
     frontmatter = {
@@ -264,8 +314,9 @@ def guess_title(path: Path, text: str) -> str:
     return path.stem.replace("_", " ").replace("-", " ").title()
 
 
-def write_processed_markdown(source_path: Path, category: str, markdown: str) -> Path:
-    category_dir = BASE_DIR / "knowledge" / "processed" / slugify(category)
+def write_processed_markdown(source_path: Path, category: str, markdown: str, *, data_root: Path | None = None) -> Path:
+    data_root = data_root or ensure_external_data_directories()
+    category_dir = data_root / "processed" / slugify(category)
     category_dir.mkdir(parents=True, exist_ok=True)
     output_path = category_dir / f"{slugify(source_path.stem)}.md"
     if output_path.exists():
@@ -291,12 +342,28 @@ def split_chunks(text: str, *, max_chars: int = 1400) -> list[str]:
     return chunks or [text]
 
 
-def write_chunks(processed_path: Path, category: str, chunks: list[str]) -> None:
-    chunk_dir = BASE_DIR / "knowledge" / "chunks" / slugify(category) / processed_path.stem
+def write_chunks(processed_path: Path, category: str, chunks: list[str], *, data_root: Path | None = None) -> None:
+    data_root = data_root or ensure_external_data_directories()
+    chunk_dir = data_root / "chunks" / slugify(category) / processed_path.stem
     chunk_dir.mkdir(parents=True, exist_ok=True)
     for index, chunk in enumerate(chunks, start=1):
         chunk_path = chunk_dir / f"chunk-{index:03d}.md"
         chunk_path.write_text(f"# {processed_path.stem} chunk {index}\n\n{chunk}\n", encoding="utf-8")
+
+
+def publish_processed_markdown(data_root: Path, *, target_dir: Path | None = None) -> list[Path]:
+    source_dir = data_root / "processed"
+    target_dir = target_dir or BASE_DIR / "knowledge" / "manuals"
+    published: list[Path] = []
+    if not source_dir.exists():
+        return published
+    for source in source_dir.rglob("*.md"):
+        relative = source.relative_to(source_dir)
+        target = target_dir / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+        published.append(target)
+    return published
 
 
 def sha256_file(path: Path) -> str:
@@ -307,9 +374,9 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def is_known_hash(file_hash: str) -> bool:
-    ensure_import_history()
-    with sqlite3.connect(IMPORT_HISTORY_PATH) as db:
+def is_known_hash(file_hash: str, *, db_path: Path | None = None) -> bool:
+    db_path = ensure_import_history(db_path)
+    with sqlite3.connect(db_path) as db:
         row = db.execute(
             "SELECT 1 FROM import_history WHERE sha256 = ? AND status IN ('processed', 'new')",
             (file_hash,),
@@ -317,9 +384,9 @@ def is_known_hash(file_hash: str) -> bool:
     return row is not None
 
 
-def record_import(result: ImportResult) -> None:
-    ensure_import_history()
-    with sqlite3.connect(IMPORT_HISTORY_PATH) as db:
+def record_import(result: ImportResult, *, db_path: Path | None = None) -> None:
+    db_path = ensure_import_history(db_path)
+    with sqlite3.connect(db_path) as db:
         db.execute(
             """
             INSERT INTO import_history
@@ -344,8 +411,9 @@ def slugify(value: str) -> str:
     return value.strip("-") or "document"
 
 
-def print_summary(results: list[ImportResult]) -> None:
+def print_summary(results: list[ImportResult], data_dir: Path) -> None:
     counts = Counter(result.status for result in results)
+    print(f"Data directory: {data_dir}")
     print(
         "Import complete: "
         f"processed={counts.get('processed', 0)} "

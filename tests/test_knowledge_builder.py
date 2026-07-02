@@ -1,8 +1,14 @@
+import json
+import os
+import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
-from scripts.build_faq import group_pairs, render_faq_markdown, target_key_for_pair
-from scripts.import_avito import AvitoMessage, build_qa_pairs, merge_consecutive, process_rows
-from scripts.import_knowledge import clean_text, detect_category, split_chunks
+from app.config import BASE_DIR, default_expertboat_data_dir, expertboat_data_dir
+from scripts.build_faq import group_pairs, load_qa, render_faq_markdown, target_key_for_pair, write_faq_files
+from scripts.import_avito import AvitoMessage, build_qa_pairs, load_jsonl, merge_consecutive, process_rows
+from scripts.import_knowledge import clean_text, detect_category, import_sources, split_chunks
 
 
 class KnowledgeBuilderTests(unittest.TestCase):
@@ -79,6 +85,75 @@ class KnowledgeBuilderTests(unittest.TestCase):
 
         self.assertIn("review_status: pending", markdown)
         self.assertIn("## Как оплатить?", markdown)
+
+    def test_expertboat_data_dir_reads_env(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict(os.environ, {"EXPERTBOAT_DATA_DIR": tmp}, clear=False):
+                self.assertEqual(expertboat_data_dir(), Path(tmp))
+
+    def test_default_data_dir_depends_on_os(self):
+        with patch("platform.system", return_value="Windows"):
+            self.assertEqual(default_expertboat_data_dir(), Path(r"D:\expertboat-data"))
+        with patch("platform.system", return_value="Linux"):
+            self.assertEqual(default_expertboat_data_dir(), Path("/data/expertboat-data"))
+
+    def test_import_knowledge_writes_to_external_storage_only(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            data_dir = Path(tmp)
+            manual = data_dir / "manuals" / "lowrance" / "elite-fs.txt"
+            manual.parent.mkdir(parents=True)
+            manual.write_text("Lowrance Elite FS 9\n\nОписание эхолота.", encoding="utf-8")
+
+            results = import_sources(source="manuals", data_dir=data_dir, publish=False, update_rag=False)
+
+            self.assertEqual(results[0].status, "processed")
+            self.assertTrue((data_dir / "processed" / "lowrance" / "elite-fs.md").exists())
+            self.assertFalse((BASE_DIR / "knowledge" / "processed" / "lowrance" / "elite-fs.md").exists())
+
+    def test_import_avito_reads_external_dialogs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data_dir = Path(tmp)
+            avito_file = data_dir / "avito" / "dialogs_raw.jsonl"
+            avito_file.parent.mkdir(parents=True)
+            avito_file.write_text(
+                json.dumps(
+                    {"id": "1", "chat_id": "c1", "direction": "incoming", "text": "Elite FS 9?"},
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {"EXPERTBOAT_DATA_DIR": str(data_dir)}, clear=False):
+                rows = load_jsonl()
+
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["chat_id"], "c1")
+
+    def test_build_faq_writes_external_review(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data_dir = Path(tmp)
+            processed = data_dir / "processed" / "avito_qa.jsonl"
+            processed.parent.mkdir(parents=True)
+            processed.write_text(
+                json.dumps(
+                    {
+                        "question": "Как доставка?",
+                        "answer": "Доставку согласуем с менеджером.",
+                        "category": "delivery",
+                        "product": "",
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            rows = load_qa(processed)
+            written = write_faq_files(group_pairs(rows), data_dir=data_dir)
+
+            self.assertTrue((data_dir / "review" / "delivery.md").exists())
+            self.assertTrue((data_dir / "faq" / "delivery.md").exists())
+            self.assertTrue(all(data_dir in path.parents for path in written))
 
 
 if __name__ == "__main__":

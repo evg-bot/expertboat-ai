@@ -2,14 +2,29 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
-INPUT_PATH = ROOT / "data" / "processed" / "avito_qa.jsonl"
-FAQ_DIR = ROOT / "data" / "faq"
-REVIEW_DIR = ROOT / "knowledge" / "review"
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from app.config import expertboat_data_dir
+from app.knowledge_import_status import ensure_external_data_directories
+
+
+def input_path(data_dir: Path | None = None) -> Path:
+    return (data_dir or expertboat_data_dir()) / "processed" / "avito_qa.jsonl"
+
+
+def faq_dir(data_dir: Path | None = None) -> Path:
+    return (data_dir or expertboat_data_dir()) / "faq"
+
+
+def review_dir(data_dir: Path | None = None) -> Path:
+    return (data_dir or expertboat_data_dir()) / "review"
 
 FAQ_FILES = {
     "sales": "sales.md",
@@ -22,7 +37,8 @@ FAQ_FILES = {
 }
 
 
-def load_qa(path: Path = INPUT_PATH) -> list[dict[str, Any]]:
+def load_qa(path: Path | None = None) -> list[dict[str, Any]]:
+    path = path or input_path()
     if not path.exists():
         return []
     rows: list[dict[str, Any]] = []
@@ -107,9 +123,11 @@ def render_faq_markdown(title: str, pairs: list[dict[str, Any]]) -> str:
     return "\n".join(lines).strip() + "\n"
 
 
-def write_faq_files(grouped: dict[str, list[dict[str, Any]]]) -> list[Path]:
-    FAQ_DIR.mkdir(parents=True, exist_ok=True)
-    REVIEW_DIR.mkdir(parents=True, exist_ok=True)
+def write_faq_files(grouped: dict[str, list[dict[str, Any]]], *, data_dir: Path | None = None) -> list[Path]:
+    faq_output_dir = faq_dir(data_dir)
+    review_output_dir = review_dir(data_dir)
+    faq_output_dir.mkdir(parents=True, exist_ok=True)
+    review_output_dir.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
     titles = {
         "sales": "FAQ: продажи",
@@ -122,7 +140,7 @@ def write_faq_files(grouped: dict[str, list[dict[str, Any]]]) -> list[Path]:
     }
     for key, filename in FAQ_FILES.items():
         content = render_faq_markdown(titles[key], grouped.get(key, []))
-        for directory in (FAQ_DIR, REVIEW_DIR):
+        for directory in (faq_output_dir, review_output_dir):
             path = directory / filename
             path.write_text(content, encoding="utf-8")
             written.append(path)
@@ -130,12 +148,13 @@ def write_faq_files(grouped: dict[str, list[dict[str, Any]]]) -> list[Path]:
 
 
 def main() -> int:
-    pairs = load_qa()
+    data_dir = ensure_external_data_directories()
+    pairs = load_qa(input_path(data_dir))
     grouped = group_pairs(pairs)
-    written = write_faq_files(grouped)
+    written = write_faq_files(grouped, data_dir=data_dir)
     print(f"Loaded QA pairs: {len(pairs)}")
     print(f"Written files: {len(written)}")
-    print(f"Review directory: {REVIEW_DIR}")
+    print(f"Review directory: {review_dir(data_dir)}")
     return 0
 
 

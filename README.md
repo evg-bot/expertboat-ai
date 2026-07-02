@@ -127,35 +127,86 @@ priority: 10
 
 ## Knowledge Builder
 
-Автоматический конвейер подготовки базы знаний состоит из трех шагов.
+Большие PDF, DOCX, сырые Avito/Telegram-выгрузки и черновики FAQ не хранятся в Git. Для них используется внешнее хранилище `EXPERTBOAT_DATA_DIR`.
 
-Структура рабочих папок:
+Значения по умолчанию:
 
 ```text
-data/
-  raw/
-    avito/
-    telegram/
-    notebook/
-  cleaned/
-  faq/
-  processed/
-
-knowledge/
-  inbox/
-  manuals/
-  processed/
-  chunks/
-  review/
+Windows: D:\expertboat-data
+Linux/VPS: /data/expertboat-data
 ```
 
-Импорт документов из `knowledge/inbox`:
+Структура внешнего хранилища:
+
+```text
+D:\expertboat-data\
+  manuals\
+    lowrance\
+    garmin\
+    simrad\
+    flir\
+    minnkota\
+    mercury\
+    yamaha\
+  avito\
+  telegram\
+  processed\
+  review\
+  faq\
+  chunks\
+  import_history.sqlite
+```
+
+Создать папки на Windows:
+
+```powershell
+New-Item -ItemType Directory -Force `
+  D:\expertboat-data\manuals\lowrance, `
+  D:\expertboat-data\manuals\garmin, `
+  D:\expertboat-data\manuals\simrad, `
+  D:\expertboat-data\manuals\flir, `
+  D:\expertboat-data\manuals\minnkota, `
+  D:\expertboat-data\manuals\mercury, `
+  D:\expertboat-data\manuals\yamaha, `
+  D:\expertboat-data\avito, `
+  D:\expertboat-data\telegram, `
+  D:\expertboat-data\processed, `
+  D:\expertboat-data\review, `
+  D:\expertboat-data\faq, `
+  D:\expertboat-data\chunks
+```
+
+Создать папки на VPS:
 
 ```bash
-python scripts/import_knowledge.py
+sudo mkdir -p /data/expertboat-data/{avito,telegram,processed,review,faq,chunks}
+sudo mkdir -p /data/expertboat-data/manuals/{lowrance,garmin,simrad,flir,minnkota,mercury,yamaha}
+sudo chown -R "$USER":"$USER" /data/expertboat-data
 ```
 
-Поддерживаются `pdf`, `docx`, `txt`, `md`, `json`, `jsonl`. Скрипт извлекает текст, чистит повторяющиеся пробелы, колонтитулы, номера страниц и OCR-мусор, определяет категорию, создает Markdown в `knowledge/processed`, режет документ на chunks в `knowledge/chunks`, записывает SHA256 в `data/import_history.sqlite` и пересобирает SQLite RAG-индекс. Повторно одинаковые документы не индексируются.
+Импорт документов из внешней папки `manuals/**/*`:
+
+```bash
+python scripts/import_knowledge.py --source manuals
+```
+
+Поддерживаются `pdf`, `docx`, `txt`, `md`, `json`, `jsonl`. Результаты пишутся во внешние папки:
+
+```text
+{EXPERTBOAT_DATA_DIR}/processed
+{EXPERTBOAT_DATA_DIR}/chunks
+{EXPERTBOAT_DATA_DIR}/import_history.sqlite
+```
+
+Повторно одинаковые документы не индексируются: используется SHA256 исходного файла.
+
+Публикация проверенных Markdown в рабочую базу бота:
+
+```bash
+python scripts/import_knowledge.py --source manuals --publish
+```
+
+Без `--publish` скрипт не пишет в `knowledge/`.
 
 Импорт сырых Avito-диалогов:
 
@@ -163,7 +214,17 @@ python scripts/import_knowledge.py
 python scripts/import_avito.py
 ```
 
-Скрипт читает `data/raw/avito/dialogs_raw.jsonl`, удаляет дубли и короткий шум вроде `ок`, `спасибо`, `понятно`, объединяет сообщения одного автора подряд и сохраняет пары вопрос/ответ в `data/processed/avito_qa.jsonl`.
+Вход:
+
+```text
+{EXPERTBOAT_DATA_DIR}/avito/dialogs_raw.jsonl
+```
+
+Выход:
+
+```text
+{EXPERTBOAT_DATA_DIR}/processed/avito_qa.jsonl
+```
 
 Сборка FAQ из обработанных диалогов:
 
@@ -171,7 +232,20 @@ python scripts/import_avito.py
 python scripts/build_faq.py
 ```
 
-FAQ создается в `data/faq/` и в `knowledge/review/`. Это review-режим: автоматически созданные ответы сначала проверяются человеком. Только подтвержденные Markdown-файлы нужно переносить в `knowledge/processed/`, после чего выполнить `/reindex` в Telegram или `python scripts/import_knowledge.py`.
+FAQ создается во внешних папках:
+
+```text
+{EXPERTBOAT_DATA_DIR}/faq
+{EXPERTBOAT_DATA_DIR}/review
+```
+
+Это review-режим: автоматически созданные ответы сначала проверяются человеком. Только подтвержденные Markdown-файлы публикуются в рабочую `knowledge/`-базу.
+
+Все источники сразу:
+
+```bash
+python scripts/import_knowledge.py --source all
+```
 
 Файлы FAQ:
 
@@ -193,7 +267,8 @@ active_target.md
 /reload             - перечитать Markdown и aliases, затем пересобрать RAG-индекс
 /reindex            - пересобрать RAG-индекс
 /ragstatus          - состояние RAG, docs count, chunks count, дата индексации
-/importstatus       - статус Knowledge Builder: обработано, новых, пропущено, ошибок
+/importstatus       - статус внешнего Knowledge Builder storage
+/importhelp         - куда класть PDF и Avito-историю
 /stats              - статистика сообщений, найденных ответов, fallback и LLM
 /learn              - обучение: вопрос -> правильный ответ -> learned.md -> reindex
 /search <запрос>    - диагностика QueryContext и top 5 chunks
@@ -212,6 +287,7 @@ cp .env.example .env
 
 ```text
 TELEGRAM_BOT_TOKEN=123456:telegram-token
+EXPERTBOAT_DATA_DIR=D:\expertboat-data
 ```
 
 Запуск:
@@ -247,6 +323,8 @@ DEEPSEEK_BASE_URL=https://api.deepseek.com
 ```bash
 ssh root@SERVER_IP
 apt-get update && apt-get install -y git
+mkdir -p /data/expertboat-data/{avito,telegram,processed,review,faq,chunks}
+mkdir -p /data/expertboat-data/manuals/{lowrance,garmin,simrad,flir,minnkota,mercury,yamaha}
 git clone https://github.com/evg-bot/expertboat-ai.git
 cd expertboat-ai
 sudo ./install.sh
@@ -274,6 +352,7 @@ docker compose up -d --build
 | --- | --- |
 | `DATABASE_PATH` | Путь к SQLite, по умолчанию `data/expertboat.db`. |
 | `KNOWLEDGE_DIR` | Путь к Markdown-базе, по умолчанию `knowledge`. |
+| `EXPERTBOAT_DATA_DIR` | Внешнее хранилище больших данных. Windows: `D:\expertboat-data`, VPS: `/data/expertboat-data`. |
 | `TELEGRAM_MANAGER_CHAT_ID` | Chat id администратора. |
 | `LLM_PROVIDER` | `openai` или `deepseek`, по умолчанию `openai`. |
 | `OPENAI_API_KEY` | API-ключ OpenAI. |
@@ -290,9 +369,10 @@ docker compose up -d --build
 ```text
 ./data:/app/data
 ./knowledge:/app/knowledge
+${EXPERTBOAT_DATA_DIR:-./external-data}:/data/expertboat-data
 ```
 
-SQLite хранится в `data/`, база знаний и aliases читаются из `knowledge/`. Команда `/learn` записывает новые знания в `knowledge/learned.md`.
+SQLite бота хранится в `data/`, рабочая база знаний и aliases читаются из `knowledge/`. Большие manuals, Avito/Telegram exports, review, FAQ, chunks и `import_history.sqlite` лежат во внешнем storage. В контейнере он доступен как `/data/expertboat-data`. Команда `/learn` записывает новые знания в `knowledge/learned.md`.
 
 ## Tests
 

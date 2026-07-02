@@ -47,6 +47,7 @@ class ExpertBoatTelegramBot:
         self.application.add_handler(CommandHandler("reindex", self.reindex))
         self.application.add_handler(CommandHandler("ragstatus", self.ragstatus))
         self.application.add_handler(CommandHandler("importstatus", self.importstatus))
+        self.application.add_handler(CommandHandler("importhelp", self.importhelp))
         self.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.message))
         self.application.add_error_handler(self.error_handler)
 
@@ -134,14 +135,34 @@ class ExpertBoatTelegramBot:
             status = await asyncio.to_thread(read_import_status)
             await update.message.reply_text(
                 "Knowledge import status:\n"
-                f"Обработано документов: {status.processed_documents}\n"
-                f"Новых: {status.new_documents}\n"
-                f"Пропущено: {status.skipped_documents}\n"
-                f"Ошибок: {status.errors}"
+                f"EXPERTBOAT_DATA_DIR: {status.data_dir}\n"
+                f"Manuals files: {status.manuals_files}\n"
+                f"Processed Markdown: {status.processed_markdown}\n"
+                f"Review files: {status.review_files}\n"
+                f"FAQ files: {status.faq_files}\n"
+                f"Import history: {'есть' if status.import_history_exists else 'нет'}\n"
+                f"Import history path: {status.import_history_path}\n"
+                f"Последний импорт: новых {status.new_documents}, пропущено {status.skipped_documents}, ошибок {status.errors}"
             )
         except Exception:
             logger.exception("Failed to read import status")
             await update.message.reply_text("Не удалось получить import status. Ошибка записана в лог.")
+
+    async def importhelp(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.message is None or not await self._ensure_admin(update):
+            return
+        data_dir = self.settings.expertboat_data_dir
+        manuals_path = data_dir / "manuals" / "lowrance"
+        avito_path = data_dir / "avito" / "dialogs_raw.jsonl"
+        await update.message.reply_text(
+            "Knowledge Builder:\n"
+            f"PDF/DOCX кладите сюда:\n{manuals_path}\n\n"
+            f"Историю Авито кладите сюда:\n{avito_path}\n\n"
+            "Запуск:\n"
+            "python scripts/import_knowledge.py --source manuals\n"
+            "python scripts/import_knowledge.py --source avito\n"
+            "python scripts/build_faq.py"
+        )
 
     async def stats(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message is None or not await self._ensure_admin(update):

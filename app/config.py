@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from dotenv import load_dotenv
 import os
+import platform
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -15,6 +16,18 @@ RAG_MIN_DOMAIN_SCORE = 1
 RAG_SHORT_QUERY_MAX_LEN = 20
 
 
+def default_expertboat_data_dir() -> Path:
+    if platform.system().casefold() == "windows":
+        return Path(r"D:\expertboat-data")
+    return Path("/data/expertboat-data")
+
+
+def expertboat_data_dir() -> Path:
+    load_dotenv(BASE_DIR / ".env")
+    value = os.getenv("EXPERTBOAT_DATA_DIR", "").strip()
+    return Path(value) if value else default_expertboat_data_dir()
+
+
 @dataclass(frozen=True)
 class Settings:
     app_env: str
@@ -22,7 +35,6 @@ class Settings:
 
     database_path: Path
     knowledge_dir: Path
-
     llm_provider: str
     llm_model: str
     deepseek_api_key: str
@@ -39,6 +51,7 @@ class Settings:
 
     telegram_bot_token: str
     telegram_manager_chat_id: str
+    expertboat_data_dir: Path = field(default_factory=default_expertboat_data_dir)
 
     ai_fallback_answer: str = FALLBACK_ANSWER
 
@@ -117,6 +130,7 @@ def load_settings() -> Settings:
         log_level=_env("LOG_LEVEL", "INFO"),
         database_path=BASE_DIR / _env("DATABASE_PATH", "data/expertboat.db"),
         knowledge_dir=BASE_DIR / _env("KNOWLEDGE_DIR", "knowledge"),
+        expertboat_data_dir=expertboat_data_dir(),
         llm_provider=llm_provider,
         llm_model=llm_model,
         deepseek_api_key=_env("DEEPSEEK_API_KEY"),

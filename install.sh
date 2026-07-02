@@ -8,6 +8,7 @@ fi
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${PROJECT_DIR}"
+EXPERTBOAT_DATA_DIR="${EXPERTBOAT_DATA_DIR:-/data/expertboat-data}"
 
 apt-get update
 apt-get install -y ca-certificates curl git gnupg
@@ -25,9 +26,12 @@ apt-get update
 apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
 mkdir -p data knowledge
+mkdir -p "${EXPERTBOAT_DATA_DIR}"/{avito,telegram,processed,review,faq,chunks}
+mkdir -p "${EXPERTBOAT_DATA_DIR}"/manuals/{lowrance,garmin,simrad,flir,minnkota,mercury,yamaha}
 
 if [[ ! -f .env ]]; then
   cp .env.example .env
+  sed -i "s|^EXPERTBOAT_DATA_DIR=.*|EXPERTBOAT_DATA_DIR=${EXPERTBOAT_DATA_DIR}|" .env
   echo "Created .env from .env.example. Fill real credentials, then run: docker compose up -d --build"
 fi
 

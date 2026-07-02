@@ -3,15 +3,30 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
-INPUT_PATH = ROOT / "data" / "raw" / "avito" / "dialogs_raw.jsonl"
-CLEANED_PATH = ROOT / "data" / "cleaned" / "avito_dialogs_cleaned.jsonl"
-PROCESSED_PATH = ROOT / "data" / "processed" / "avito_qa.jsonl"
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from app.config import expertboat_data_dir
+from app.knowledge_import_status import ensure_external_data_directories
+
+
+def input_path(data_dir: Path | None = None) -> Path:
+    return (data_dir or expertboat_data_dir()) / "avito" / "dialogs_raw.jsonl"
+
+
+def cleaned_path(data_dir: Path | None = None) -> Path:
+    return (data_dir or expertboat_data_dir()) / "processed" / "avito_dialogs_cleaned.jsonl"
+
+
+def processed_path(data_dir: Path | None = None) -> Path:
+    return (data_dir or expertboat_data_dir()) / "processed" / "avito_qa.jsonl"
 
 NOISE_MESSAGES = {
     "ок",
@@ -53,7 +68,8 @@ def is_noise_message(text: str) -> bool:
     return compact in NOISE_MESSAGES or len(compact) <= 1
 
 
-def load_jsonl(path: Path = INPUT_PATH) -> list[dict[str, Any]]:
+def load_jsonl(path: Path | None = None) -> list[dict[str, Any]]:
+    path = path or input_path()
     if not path.exists():
         return []
     rows: list[dict[str, Any]] = []
@@ -232,15 +248,16 @@ def process_rows(rows: list[dict[str, Any]]) -> tuple[list[AvitoMessage], list[d
 
 
 def main() -> int:
-    rows = load_jsonl()
+    data_dir = ensure_external_data_directories()
+    rows = load_jsonl(input_path(data_dir))
     messages, qa_pairs = process_rows(rows)
-    write_jsonl(CLEANED_PATH, [message.__dict__ for message in messages])
-    write_jsonl(PROCESSED_PATH, qa_pairs)
+    write_jsonl(cleaned_path(data_dir), [message.__dict__ for message in messages])
+    write_jsonl(processed_path(data_dir), qa_pairs)
     print(f"Loaded rows: {len(rows)}")
     print(f"Cleaned messages: {len(messages)}")
     print(f"QA pairs: {len(qa_pairs)}")
-    print(f"Cleaned output: {CLEANED_PATH}")
-    print(f"Processed output: {PROCESSED_PATH}")
+    print(f"Cleaned output: {cleaned_path(data_dir)}")
+    print(f"Processed output: {processed_path(data_dir)}")
     return 0
 
 
