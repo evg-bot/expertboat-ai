@@ -11,6 +11,7 @@ from app.ai import GREETING_RESPONSE, ExpertBoatAI
 from app.config import Settings
 from app.database import Database
 from app.knowledge import KnowledgeBase, strip_markdown
+from app.knowledge_import_status import read_import_status
 from app.rag import RAG_MIN_SCORE, RagEngine, RagSearchResult, classify_intent
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,7 @@ class ExpertBoatTelegramBot:
         self.application.add_handler(CommandHandler("aliases", self.aliases))
         self.application.add_handler(CommandHandler("reindex", self.reindex))
         self.application.add_handler(CommandHandler("ragstatus", self.ragstatus))
+        self.application.add_handler(CommandHandler("importstatus", self.importstatus))
         self.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.message))
         self.application.add_error_handler(self.error_handler)
 
@@ -124,6 +126,22 @@ class ExpertBoatTelegramBot:
         except Exception:
             logger.exception("Failed to build RAG status")
             await update.message.reply_text("Не удалось получить RAG status. Ошибка записана в лог.")
+
+    async def importstatus(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.message is None or not await self._ensure_admin(update):
+            return
+        try:
+            status = await asyncio.to_thread(read_import_status)
+            await update.message.reply_text(
+                "Knowledge import status:\n"
+                f"Обработано документов: {status.processed_documents}\n"
+                f"Новых: {status.new_documents}\n"
+                f"Пропущено: {status.skipped_documents}\n"
+                f"Ошибок: {status.errors}"
+            )
+        except Exception:
+            logger.exception("Failed to read import status")
+            await update.message.reply_text("Не удалось получить import status. Ошибка записана в лог.")
 
     async def stats(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message is None or not await self._ensure_admin(update):

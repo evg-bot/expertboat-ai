@@ -8,3 +8,12 @@ __pycache__/
 venv/
 data/*.db
 data/*.db-*
+data/*.sqlite
+data/*.sqlite-*
+data/raw/**/*.json
+data/raw/**/*.jsonl
+data/cleaned/*.jsonl
+data/processed/*.jsonl
+data/avito_dump/
+data/chrome_profile/
+data/avito_state.json
