@@ -13,6 +13,7 @@ if str(ROOT) not in sys.path:
 
 from app.config import expertboat_data_dir
 from app.knowledge_import_status import ensure_external_data_directories
+from scripts.import_listings import sqlite_path as listings_sqlite_path
 
 
 def input_path(data_dir: Path | None = None) -> Path:
@@ -123,6 +124,59 @@ def render_faq_markdown(title: str, pairs: list[dict[str, Any]]) -> str:
     return "\n".join(lines).strip() + "\n"
 
 
+def load_listing_price_rows(data_dir: Path | None = None) -> list[dict[str, Any]]:
+    db_path = listings_sqlite_path(data_dir)
+    if not db_path.exists():
+        return []
+    import sqlite3
+
+    with sqlite3.connect(db_path) as db:
+        rows = db.execute(
+            """
+            SELECT title, price_text
+            FROM listings
+            WHERE title != '' AND price_text != ''
+            ORDER BY updated_at DESC, title ASC
+            """
+        ).fetchall()
+    return [{"title": title, "price_text": price_text} for title, price_text in rows]
+
+
+def render_listing_price_faq(rows: list[dict[str, Any]]) -> str:
+    lines = [
+        "---",
+        "title: FAQ: цены по объявлениям",
+        "source: listings",
+        "review_status: pending",
+        "---",
+        "",
+        "# FAQ: цены по объявлениям",
+        "",
+    ]
+    for row in rows:
+        title = clean_answer_text(str(row.get("title") or ""))
+        price_text = clean_answer_text(str(row.get("price_text") or ""))
+        if not title or not price_text:
+            continue
+        answer = (
+            f"Цена по объявлению — {price_text}. "
+            "Актуальность и наличие лучше подтвердить перед заказом."
+        )
+        lines.extend(
+            [
+                f"## Сколько стоит {title}?",
+                "",
+                answer,
+                "",
+                f"## Какая цена на {title}?",
+                "",
+                answer,
+                "",
+            ]
+        )
+    return "\n".join(lines).strip() + "\n"
+
+
 def write_faq_files(grouped: dict[str, list[dict[str, Any]]], *, data_dir: Path | None = None) -> list[Path]:
     faq_output_dir = faq_dir(data_dir)
     review_output_dir = review_dir(data_dir)
@@ -144,6 +198,11 @@ def write_faq_files(grouped: dict[str, list[dict[str, Any]]], *, data_dir: Path 
             path = directory / filename
             path.write_text(content, encoding="utf-8")
             written.append(path)
+    listing_rows = load_listing_price_rows(data_dir)
+    if listing_rows:
+        path = review_output_dir / "listings_price_faq.md"
+        path.write_text(render_listing_price_faq(listing_rows), encoding="utf-8")
+        written.append(path)
     return written
 
 

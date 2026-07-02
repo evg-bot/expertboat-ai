@@ -173,13 +173,14 @@ New-Item -ItemType Directory -Force `
   D:\expertboat-data\processed, `
   D:\expertboat-data\review, `
   D:\expertboat-data\faq, `
-  D:\expertboat-data\chunks
+  D:\expertboat-data\chunks, `
+  D:\expertboat-data\listings
 ```
 
 Создать папки на VPS:
 
 ```bash
-sudo mkdir -p /data/expertboat-data/{avito,telegram,processed,review,faq,chunks}
+sudo mkdir -p /data/expertboat-data/{avito,telegram,processed,review,faq,chunks,listings}
 sudo mkdir -p /data/expertboat-data/manuals/{lowrance,garmin,simrad,flir,minnkota,mercury,yamaha}
 sudo chown -R "$USER":"$USER" /data/expertboat-data
 ```
@@ -259,6 +260,52 @@ hds_pro.md
 active_target.md
 ```
 
+## Listing Builder
+
+Listing Builder хранит актуальные карточки объявлений Авито отдельно от старой переписки. Это нужно, чтобы цена, название, статус, описание и характеристики брались из объявления, а не из устаревшего диалога.
+
+Внешние файлы:
+
+```text
+{EXPERTBOAT_DATA_DIR}/listings/
+{EXPERTBOAT_DATA_DIR}/listings/listings.sqlite
+{EXPERTBOAT_DATA_DIR}/listings/listings_raw.jsonl
+{EXPERTBOAT_DATA_DIR}/listings/listings_cleaned.jsonl
+{EXPERTBOAT_DATA_DIR}/listings/listing_history.jsonl
+```
+
+Основной импорт:
+
+```bash
+python scripts/import_listings.py
+```
+
+В Docker:
+
+```bash
+docker compose exec expertboat-ai python scripts/import_listings.py
+```
+
+Если есть файл `{EXPERTBOAT_DATA_DIR}/listings/listings_raw.jsonl`, скрипт читает его. Формат строки:
+
+```json
+{"url":"...","title":"Lowrance Elite FS 10 + датчик AI 3-in-1 26.2 RUS","price":"135 000 ₽","description":"...","status":"active","photos":[],"attributes":{}}
+```
+
+Если `listings_raw.jsonl` отсутствует, включается временный fallback: скрипт читает `{EXPERTBOAT_DATA_DIR}/processed/avito_qa.jsonl` и создает минимальные карточки из `listing_title`, `listing_price`, `chat_url`.
+
+Скрипт нормализует:
+
+```text
+price_text: "135 000 ₽"
+price: 135000
+brand / series / model / screen_size / transducer / firmware / category
+```
+
+При изменении цены, статуса, описания или характеристик изменения пишутся в `listing_history` и `listing_history.jsonl`.
+
+FAQ по ценам строится из `listings.sqlite`: `python scripts/build_faq.py` добавляет в review файл `listings_price_faq.md`.
+
 ## Telegram Commands
 
 ```text
@@ -269,6 +316,8 @@ active_target.md
 /ragstatus          - состояние RAG, docs count, chunks count, дата индексации
 /importstatus       - статус внешнего Knowledge Builder storage
 /importhelp         - куда класть PDF и Avito-историю
+/listingstatus      - статус Listing Builder и последние 5 объявлений
+/listinghelp        - куда класть listings_raw.jsonl и как работает fallback
 /stats              - статистика сообщений, найденных ответов, fallback и LLM
 /learn              - обучение: вопрос -> правильный ответ -> learned.md -> reindex
 /search <запрос>    - диагностика QueryContext и top 5 chunks
@@ -323,7 +372,7 @@ DEEPSEEK_BASE_URL=https://api.deepseek.com
 ```bash
 ssh root@SERVER_IP
 apt-get update && apt-get install -y git
-mkdir -p /data/expertboat-data/{avito,telegram,processed,review,faq,chunks}
+mkdir -p /data/expertboat-data/{avito,telegram,processed,review,faq,chunks,listings}
 mkdir -p /data/expertboat-data/manuals/{lowrance,garmin,simrad,flir,minnkota,mercury,yamaha}
 git clone https://github.com/evg-bot/expertboat-ai.git
 cd expertboat-ai

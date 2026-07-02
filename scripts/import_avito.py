@@ -144,6 +144,19 @@ BUYER_MARKERS = (
     "наличии",
 )
 
+PRICE_QUERY_MARKERS = (
+    "цена",
+    "стоимость",
+    "сколько стоит",
+    "по цене",
+    "актуальная цена",
+)
+
+PRICE_ANSWER_TEMPLATE = (
+    "Цена по объявлению — {listing_price}. "
+    "Актуальность и наличие лучше подтвердить перед заказом."
+)
+
 SUPPORT_DIALOG_MARKERS = (
     "поддержка авито",
     "служба поддержки",
@@ -249,6 +262,11 @@ def clean_message_text(text: str) -> str:
 def is_noise_message(text: str) -> bool:
     compact = compact_for_compare(text)
     return compact in NOISE_MESSAGES or len(compact) < 3
+
+
+def is_price_question(text: str) -> bool:
+    normalized = compact_for_compare(text)
+    return any(marker in normalized for marker in PRICE_QUERY_MARKERS)
 
 
 def is_footer_message(text: str) -> bool:
@@ -451,11 +469,17 @@ def build_qa_pairs(messages: list[AvitoMessage]) -> list[dict[str, str]]:
 
         def flush_pair() -> None:
             nonlocal question_parts, answer_parts, question_meta
-            if not question_parts or not answer_parts or question_meta is None:
+            if not question_parts or question_meta is None:
                 return
             question = " ".join(part.strip() for part in question_parts if part.strip()).strip()
             answer = " ".join(part.strip() for part in answer_parts if part.strip()).strip()
-            if len(question) < 3 or not answer:
+            if len(question) < 3:
+                return
+            if is_price_question(question):
+                if not question_meta.listing_price:
+                    return
+                answer = PRICE_ANSWER_TEMPLATE.format(listing_price=question_meta.listing_price)
+            elif not answer:
                 return
             if is_support_dialog({"source": "avito", "chat_url": question_meta.chat_url}, f"{question} {answer}"):
                 return

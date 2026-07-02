@@ -43,6 +43,7 @@ def ensure_external_data_directories(data_dir: Path | None = None) -> Path:
         root / "review",
         root / "faq",
         root / "chunks",
+        root / "listings",
     ]
     directories.extend(root / "manuals" / category for category in MANUALS_CATEGORIES)
     for directory in directories:

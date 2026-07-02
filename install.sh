@@ -26,7 +26,7 @@ apt-get update
 apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
 mkdir -p data knowledge
-mkdir -p "${EXPERTBOAT_DATA_DIR}"/{avito,telegram,processed,review,faq,chunks}
+mkdir -p "${EXPERTBOAT_DATA_DIR}"/{avito,telegram,processed,review,faq,chunks,listings}
 mkdir -p "${EXPERTBOAT_DATA_DIR}"/manuals/{lowrance,garmin,simrad,flir,minnkota,mercury,yamaha}
 
 if [[ ! -f .env ]]; then

@@ -12,6 +12,7 @@ from app.config import Settings
 from app.database import Database
 from app.knowledge import KnowledgeBase, strip_markdown
 from app.knowledge_import_status import read_import_status
+from app.listing_status import read_listing_status
 from app.rag import RAG_MIN_SCORE, RagEngine, RagSearchResult, classify_intent
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,8 @@ class ExpertBoatTelegramBot:
         self.application.add_handler(CommandHandler("ragstatus", self.ragstatus))
         self.application.add_handler(CommandHandler("importstatus", self.importstatus))
         self.application.add_handler(CommandHandler("importhelp", self.importhelp))
+        self.application.add_handler(CommandHandler("listingstatus", self.listingstatus))
+        self.application.add_handler(CommandHandler("listinghelp", self.listinghelp))
         self.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.message))
         self.application.add_error_handler(self.error_handler)
 
@@ -162,6 +165,35 @@ class ExpertBoatTelegramBot:
             "python scripts/import_knowledge.py --source manuals\n"
             "python scripts/import_knowledge.py --source avito\n"
             "python scripts/build_faq.py"
+        )
+
+    async def listingstatus(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.message is None or not await self._ensure_admin(update):
+            return
+        status = await asyncio.to_thread(read_listing_status, self.settings.expertboat_data_dir)
+        recent = "\n".join(f"- {title} — {price}" for title, price in status.recent) or "нет данных"
+        await update.message.reply_text(
+            "Listing Builder status:\n"
+            f"SQLite exists: {'yes' if status.sqlite_exists else 'no'}\n"
+            f"SQLite path: {status.sqlite_path}\n"
+            f"Listings count: {status.listings_count}\n"
+            f"Active: {status.active_count}\n"
+            f"Unknown: {status.unknown_count}\n"
+            f"Last updated: {status.last_updated or 'нет данных'}\n"
+            f"Последние объявления:\n{recent}"
+        )
+
+    async def listinghelp(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.message is None or not await self._ensure_admin(update):
+            return
+        listings_path = self.settings.expertboat_data_dir / "listings" / "listings_raw.jsonl"
+        qa_path = self.settings.expertboat_data_dir / "processed" / "avito_qa.jsonl"
+        await update.message.reply_text(
+            "Listing Builder:\n"
+            f"JSONL с объявлениями кладите сюда:\n{listings_path}\n\n"
+            f"Если файла нет, можно временно использовать fallback из:\n{qa_path}\n\n"
+            "Запуск:\n"
+            "python scripts/import_listings.py"
         )
 
     async def stats(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
