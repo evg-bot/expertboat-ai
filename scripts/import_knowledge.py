@@ -132,7 +132,7 @@ def run_avito_import(data_root: Path) -> list[ImportResult]:
     from scripts import import_avito
 
     rows = import_avito.load_jsonl(import_avito.input_path(data_root))
-    messages, qa_pairs = import_avito.process_rows(rows)
+    messages, qa_pairs, _stats = import_avito.process_rows(rows)
     import_avito.write_jsonl(import_avito.cleaned_path(data_root), [message.__dict__ for message in messages])
     import_avito.write_jsonl(import_avito.processed_path(data_root), qa_pairs)
     return [

@@ -21,6 +21,7 @@ data/processed/*.jsonl
 data/avito_dump/
 data/chrome_profile/
 data/avito_state.json
+external-data/
 knowledge/inbox/
 knowledge/manuals/
 knowledge/processed/

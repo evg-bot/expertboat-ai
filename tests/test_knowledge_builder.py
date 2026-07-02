@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from app.config import BASE_DIR, default_expertboat_data_dir, expertboat_data_dir
 from scripts.build_faq import group_pairs, load_qa, render_faq_markdown, target_key_for_pair, write_faq_files
-from scripts.import_avito import AvitoMessage, build_qa_pairs, load_jsonl, merge_consecutive, process_rows
+from scripts.import_avito import load_jsonl, process_rows
 from scripts.import_knowledge import clean_text, detect_category, import_sources, split_chunks
 
 
@@ -43,33 +43,79 @@ class KnowledgeBuilderTests(unittest.TestCase):
         self.assertTrue(chunks[0].startswith("A"))
         self.assertTrue(chunks[1].startswith("B"))
 
-    def test_avito_processing_merges_and_builds_qa(self):
+    def test_avito_page_text_lowrance_elite_fs_9_genesis_live(self):
         rows = [
-            {"id": "1", "chat_id": "c1", "direction": "incoming", "text": "Есть 9фс?"},
-            {"id": "2", "chat_id": "c1", "direction": "outgoing", "text": "Да, проверим наличие."},
-            {"id": "3", "chat_id": "c1", "direction": "incoming", "text": "спасибо"},
+            {
+                "source": "avito",
+                "chat_url": "https://www.avito.ru/profile/messenger/channel/1",
+                "text": (
+                    "Для бизнеса Карьера в Авито Мои объявления Избранное Уведомления Сообщения "
+                    "Lowrance Elite FS 9 + датчик 3-in-1 26.2 RUS 89 900 ₽ "
+                    "13 мая 2026 г. 10:15 Здравствуйте, Genesis Live есть? Прочитано "
+                    "10:17 Добрый день. Палитра есть, Genesis Live работает. Наши контакты отправим. "
+                    "Помощь Безопасность Реклама на сайте О компании Авито Журнал"
+                ),
+            }
         ]
 
-        messages, pairs = process_rows(rows)
+        messages, pairs, stats = process_rows(rows)
 
-        self.assertEqual(len(messages), 2)
-        self.assertEqual(len(pairs), 1)
-        self.assertEqual(pairs[0]["product"], "Elite FS")
-        self.assertEqual(pairs[0]["category"], "sales")
+        self.assertEqual(stats.loaded_rows, 1)
+        self.assertEqual(stats.parsed_messages, 2)
+        self.assertEqual(stats.buyer_messages, 1)
+        self.assertEqual(stats.seller_messages, 1)
+        self.assertEqual(stats.qa_pairs, 1)
+        self.assertEqual(messages[0].listing_title, "Lowrance Elite FS 9 + датчик 3-in-1 26.2 RUS")
+        self.assertEqual(messages[0].listing_price, "89 900 ₽")
+        self.assertEqual(messages[0].date, "13 мая 2026 г.")
+        self.assertEqual(messages[0].time, "10:15")
+        self.assertEqual(messages[0].sender, "buyer")
+        self.assertEqual(messages[1].sender, "seller")
+        self.assertIn("Genesis Live", pairs[0]["question"])
+        self.assertIn("Палитра", pairs[0]["answer"])
+        self.assertEqual(pairs[0]["source"], "avito")
 
-    def test_merge_consecutive_same_author(self):
-        messages = [
-            AvitoMessage("c1", "customer", "Добрый день", "1", "1"),
-            AvitoMessage("c1", "customer", "Нужен датчик", "2", "2"),
-            AvitoMessage("c1", "manager", "Подскажем", "3", "3"),
+    def test_avito_page_text_lowrance_elite_fs_10_invoice_unavailable(self):
+        rows = [
+            {
+                "source": "avito",
+                "chat_url": "https://www.avito.ru/profile/messenger/channel/2",
+                "text": (
+                    "Главное Настройки доставки Корзина Бизнес360 "
+                    "Lowrance Elite FS 10 119 900 ₽ "
+                    "Вторник, 30 июня 11:01 Добрый день, выставите счет ИП? "
+                    "11:05 У нас сейчас нет в наличии. На днях ожидаем, счет выставляем после подтверждения. "
+                    "Правила Авито Политика конфиденциальности Регионы"
+                ),
+            }
         ]
 
-        merged = merge_consecutive(messages)
-        pairs = build_qa_pairs(merged)
+        messages, pairs, stats = process_rows(rows)
 
-        self.assertEqual(len(merged), 2)
-        self.assertIn("Нужен датчик", merged[0].text)
-        self.assertEqual(len(pairs), 1)
+        self.assertEqual(stats.parsed_messages, 2)
+        self.assertEqual(stats.buyer_messages, 1)
+        self.assertEqual(stats.seller_messages, 1)
+        self.assertEqual(stats.unknown_messages, 0)
+        self.assertEqual(messages[0].listing_title, "Lowrance Elite FS 10")
+        self.assertEqual(messages[0].listing_price, "119 900 ₽")
+        self.assertEqual(messages[0].date, "Вторник, 30 июня")
+        self.assertEqual(pairs[0]["question"], "Добрый день, выставите счет ИП?")
+        self.assertIn("нет в наличии", pairs[0]["answer"])
+
+    def test_avito_support_dialog_is_skipped(self):
+        rows = [
+            {
+                "source": "avito",
+                "chat_url": "https://www.avito.ru/support",
+                "text": "Поддержка Авито 12:00 Сообщение от Авито",
+            }
+        ]
+
+        messages, pairs, stats = process_rows(rows)
+
+        self.assertEqual(messages, [])
+        self.assertEqual(pairs, [])
+        self.assertEqual(stats.skipped_support_dialogs, 1)
 
     def test_build_faq_review_markdown(self):
         pair = {
@@ -117,7 +163,11 @@ class KnowledgeBuilderTests(unittest.TestCase):
             avito_file.parent.mkdir(parents=True)
             avito_file.write_text(
                 json.dumps(
-                    {"id": "1", "chat_id": "c1", "direction": "incoming", "text": "Elite FS 9?"},
+                    {
+                        "source": "avito",
+                        "chat_url": "https://www.avito.ru/profile/messenger/channel/1",
+                        "text": "Lowrance Elite FS 9 89 900 ₽ 10:15 Есть Genesis Live?",
+                    },
                     ensure_ascii=False,
                 )
                 + "\n",
@@ -127,7 +177,7 @@ class KnowledgeBuilderTests(unittest.TestCase):
                 rows = load_jsonl()
 
             self.assertEqual(len(rows), 1)
-            self.assertEqual(rows[0]["chat_id"], "c1")
+            self.assertEqual(rows[0]["chat_url"], "https://www.avito.ru/profile/messenger/channel/1")
 
     def test_build_faq_writes_external_review(self):
         with tempfile.TemporaryDirectory() as tmp:
